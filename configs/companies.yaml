@@ -1,0 +1,22 @@
+companies:
+  - ticker: NVDA
+    name: NVIDIA
+    homepage_url: https://www.nvidia.com/
+    investor_relations_url: https://investor.nvidia.com/
+    hints:
+      - https://nvidianews.nvidia.com/
+
+  - ticker: AMD
+    name: AMD
+    homepage_url: https://www.amd.com/
+    investor_relations_url: https://ir.amd.com/
+    hints:
+      - https://www.amd.com/en/newsroom.html
+
+  - ticker: AAPL
+    name: Apple
+    homepage_url: https://www.apple.com/
+    investor_relations_url: https://investor.apple.com/
+    hints:
+      - https://www.apple.com/newsroom/
+
