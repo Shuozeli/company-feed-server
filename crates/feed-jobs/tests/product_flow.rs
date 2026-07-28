@@ -105,7 +105,7 @@ async fn public_feed_becomes_api_item_and_git_archive() {
     let database = Database::connect(&database_url, 8)
         .await
         .expect("connect to Postgres");
-    database.migrate().await.expect("run migrations");
+    database.ensure_schema().await.expect("ensure schema");
     let unique = Uuid::new_v4().simple().to_string();
     let company_key = format!("e2e-{}", &unique[..8]);
     let company_id: Uuid = sqlx::query_scalar(
@@ -527,7 +527,7 @@ async fn private_adapter_suggestions_are_publicly_validated_before_storage() {
     let database = Database::connect(&database_url, 8)
         .await
         .expect("connect to Postgres");
-    database.migrate().await.expect("run migrations");
+    database.ensure_schema().await.expect("ensure schema");
     let unique = Uuid::new_v4().simple().to_string();
     let company_key = format!("web-adapter-{}", &unique[..8]);
     let company_id: Uuid = sqlx::query_scalar(
@@ -776,7 +776,7 @@ async fn manual_news_import_fetches_and_persists_cited_public_articles() {
     let database = Database::connect(&database_url, 8)
         .await
         .expect("connect to Postgres");
-    database.migrate().await.expect("run migrations");
+    database.ensure_schema().await.expect("ensure schema");
     let unique = Uuid::new_v4().simple().to_string();
     let company_key = format!("manual-news-{}", &unique[..8]);
     let company_id: Uuid = sqlx::query_scalar(

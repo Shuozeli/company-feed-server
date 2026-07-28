@@ -773,6 +773,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "feed-content-worker"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "feed-api",
+ "feed-core",
+ "feed-db",
+ "feed-jobs",
+ "feed-scheduler",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "feed-core"
 version = "0.1.0"
 dependencies = [

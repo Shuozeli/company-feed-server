@@ -27,14 +27,14 @@ Candidate: `v0.1.0-rc.1`
 | Formatting | passed |
 | Clippy, all targets/features, warnings denied | passed |
 | Workspace tests | 271 passed |
-| Fresh database migrations | 136 applied in integration and Compose smoke tests |
+| Declarative database schema | clean initialization, generated live diff, and zero-drift Compose apply passed |
 | RustSec | passed with the unreachable SQLx/MySQL lockfile exception documented in `SECURITY.md` |
 | Dependency maintenance | active HTML parser path has no denied unmaintained warning |
 | Secret scan | Git history and assembled release tree passed |
 | GitHub Actions syntax | passed `actionlint` |
 | Compose validation | passed |
 | Clean container bootstrap | `/ready`, `/news`, and coverage API passed |
-| Live deployment | API plus four workers healthy on one release image |
+| Live deployment | API plus discovery, validation, crawl/export, recipe-build, and content workers healthy |
 | Browser validation | embedded and optional static news dashboards passed |
 
 ## Publication Sequence

@@ -1,8 +1,11 @@
 # Database Design
 
-Postgres is the only runtime database. Ordered files under `migrations/` are
-the executable schema source of truth. Every runtime applies pending `sqlx`
-migrations at startup.
+Postgres is the only runtime database. [`schema/postgres.sql`](../schema/postgres.sql)
+is the single structural source of truth. A blank database may initialize
+directly from that file; existing databases are reconciled only through the
+generated `pg-schema-diff` plan exposed by `scripts/schema-plan.sh` and
+`scripts/schema-apply.sh`. Runtime startup verifies the required schema and
+does not execute a sequential migration history.
 
 ## Table Catalog
 
@@ -76,6 +79,10 @@ their audit history.
 - `discovery_runs`: discovery attempts;
 - `candidate_validation_runs`: validation attempts;
 - `crawl_runs`: source crawl attempts;
+- `content_crawl_state`: current per-item attempt, retry, freshness, extraction
+  version, and content-size state;
+- `content_crawl_attempts`: append-only article-page fetch outcomes and
+  diagnostics;
 - `company_news_extraction_runs`: operator-selected import windows, outcome counts,
   sanitized failure, and adapter/content audit metadata;
 - `export_runs`: materialization, commit, and push attempts;
@@ -87,6 +94,7 @@ Supported job types:
 discover_company
 validate_candidate
 crawl_source
+crawl_content
 extract_company_news
 export_target
 normalize_backfill
@@ -99,6 +107,8 @@ useful if old job rows are pruned.
 
 - `raw_crawl_items`: replayable crawler output and processing state;
 - `feed_items`: stable normalized public content;
+- `content_crawl_state`: the current hydration/freshness projection;
+- `content_crawl_attempts`: immutable content-fetch audit attempts;
 - `export_targets`: repository, layout, cadence, enablement, and push policy;
 - `exported_items`: per-target content hash, path, commit, and timestamp.
 
@@ -313,14 +323,15 @@ non-replay-safe.
 through the current ownership gate; a conclusive below-majority result
 supersedes the recipe after that run and records item-scope counts in recipe-run
 metadata.
-Migration 0131 applies the runtime `company-scope-relevance.v4` vocabulary to
-the historical minimum-threshold cohort whose narrative alias annotations
-supplied non-company connector words. It stales the inferred recipes, disables
-the provisional feeds, and reversibly quarantines only rows from those sources;
-independently scoped direct evidence remains unquarantined but still obeys the
-normal active-recipe API gate. The next explicit all-company campaign can
-therefore rediscover the company without replaying the false association.
-Migration 0132 records two reviewed distinctions exposed by the same audit.
+The durable repair audit applies the runtime `company-scope-relevance.v4`
+vocabulary to the historical minimum-threshold cohort whose narrative alias
+annotations supplied non-company connector words. It stales the inferred
+recipes, disables the provisional feeds, and reversibly quarantines only rows
+from those sources; independently scoped direct evidence remains
+unquarantined but still obeys the normal active-recipe API gate. The next
+explicit all-company campaign can therefore rediscover the company without
+replaying the false association. The same audit records two reviewed
+distinctions.
 `manh.com` and `ir.manh.com` are verified first-party Manhattan Associates
 hosts, so the imported security name is replaced by the company name and its
 scope-blocked recipes become explicit rebuild inputs. DeepAware's official
@@ -329,10 +340,10 @@ arm, but the current `roboticscenter.ai` digest is not a DeepAware company
 publication. Those sources are disabled, their four observed rows are retained
 privately, and the host is excluded until a later operator review proves that
 its publication scope changed.
-Migration 0133 reversibly quarantines demo-series and product-tour utilities
-found below broad resource/library routes. It immediately recrawls affected
-active recipes with the matching runtime policy, allowing blog, research, and
-news children from the same listing to remain active.
+The reviewed utility repair reversibly quarantines demo-series and product-tour
+utilities found below broad resource/library routes. It immediately recrawls
+affected active recipes with the matching runtime policy, allowing blog,
+research, and news children from the same listing to remain active.
 The separate reversible `company-scope-relevance.v1` quarantine covers
 articles proven to come from an unscoped third-party multi-company collection.
 Its runtime counterpart applies to recipes with `company_identity` item scope,
@@ -374,24 +385,20 @@ verified brand or rename can retain publication-boundary scope. Adapter
 recipes re-evaluate reviewed exclusions on every crawl, so an immutable
 historical scope cannot bypass a later ownership correction. An explicit
 historical adapter boundary otherwise remains intact because issuer brands and
-acronyms are not always derivable from the registry name. Migration 0115 began
-a blanket boundary audit; migration 0117 cancels its still-pending portion and
-restores the valid brand publications that proved that blanket narrowing too
-conservative. Migration 0120 applies the same reviewed profile contract to
-official feeds exposed by the all-company campaign, records a legal rename
-without changing its stable company key, and keeps a shared fund-manager host
-company-identity scoped.
+acronyms are not always derivable from the registry name. Historical boundary
+audits restored valid brand publications where blanket narrowing proved too
+conservative. The same reviewed profile contract applies to official feeds
+exposed by an all-company campaign, preserves stable company keys through
+legal renames, and keeps shared fund-manager hosts company-identity scoped.
 `company-host-identity.v2` excludes the terminal DNS suffix from name-to-host
 matching, so a name such as `Example.com` cannot claim every unrelated `.com`
-publication. Migration 0116 retires the confirmed historical expansion and
-queues every remaining active domain-branded company recipe through the
-corrected rule.
+publication. Historical corrections retired confirmed over-expansion and
+queued affected domain-branded company recipes through the corrected rule.
 Recrawling a privately retained item preserves any non-replay-safe
 `quality_quarantine` metadata while refreshing the remaining normalized
 content, so its audit reason is not erased by a structurally successful fetch.
-Migration 0086 restores the same structured reason from the latest matching
-quarantine event for legacy private rows whose metadata had already been
-overwritten.
+Legacy private rows can recover the same structured reason from the latest
+matching quarantine event if older metadata was overwritten.
 `cross-company-feed-ownership.v1` applies the same terminal treatment when
 canonical article identities prove that a recipe sample belongs to an approved
 RSS/Atom feed for a different name-first issuer. Same-issuer security classes
@@ -400,17 +407,16 @@ are excluded from this conflict check.
 valid first-party ownership cannot publish a feed or recipe sample dominated
 by unrelated casino/gambling SEO material. The quarantine is reversible but
 is not replay-released automatically; an operator must first confirm that the
-publication and source are trustworthy again. Migration 0134 disables the two
-affected Infina blog sources, stales their active recipe, retains every
-observed row privately, and also moves the generic legal-notice/video-library
-utilities into replay-safe `recipe-listing-artifact.v52`.
-Migration 0135 applies the same reversible incident record to the reviewed
-CEL-SCI, Cerus, Reitar, and Infina-root sources. It separately records
+publication and source are trustworthy again. Corrective audits disable
+affected sources, stale their active recipes, retain observed rows privately,
+and move generic legal-notice/video-library utilities into replay-safe
+`recipe-listing-artifact.v52`. The same reversible incident record applies to
+reviewed compromised sources. It separately records
 Discourse `/discuss/` endpoints under `non-editorial-feed-scope.v2`. RADCOM's
 reviewed attack-window rows are private while its recovered source and ten
-clean rows remain active. Migration 0136 moves the recovery marker from pending
-to recovered only when the dedicated crawl job is complete, and applies the
-shared discussion-item quarantine to the final legacy thread.
+clean rows remain active. The terminal recovery operation moves the recovery
+marker from pending to recovered only when the dedicated crawl job is complete,
+and applies the shared discussion-item quarantine to the final legacy thread.
 The runtime `cross-company-item-scope.v1` policy handles partial overlaps that
 do not justify retiring an entire source. Exact public article identities
 claimed by distinct name-first issuers must explicitly scope each company or
@@ -422,86 +428,88 @@ and dual-listed legal forms normalized to the same issuer are excluded.
 `shared-feed-scope.v2` disables legacy global Simply Wall St feeds, and
 `cross-company-source-ownership.v1` retires exact feed or publication sources
 whose URL/content belongs to another imported issuer. Both retain the original
-rows and structured repair events for audit. Migration 0121 likewise retains
-and reversibly quarantines a placeholder-only CMS feed and a manager-wide fund
-feed that was incorrectly assigned to one trust; dedicated replacements remain
-discoverable. Migration 0122 extends the same reversible repair to exact global
-wire/market-news landing pages and manager-wide BlackRock, Gabelli, and Angel
-Oak publications assigned to a different vehicle. It supersedes affected
-recipes, rejects accepted candidates, and installs reviewed manager-host
-exclusions without changing the manager operating company's own profile.
-Migration 0123 retires two host-level ownership collisions proven by current
-content and by another imported company's source inventory: Public Storage
-sources assigned to National Storage Affiliates, and Lattice sources assigned
-to Maven. The sources, recipes, candidates, raw rows, and normalized items are
+rows and structured repair events for audit. The repair catalog likewise
+retains and reversibly quarantines a placeholder-only CMS feed and a
+manager-wide fund feed that was incorrectly assigned to one trust; dedicated
+replacements remain discoverable. It applies the same reversible repair to
+exact global wire/market-news landing pages and manager-wide BlackRock,
+Gabelli, and Angel Oak publications assigned to a different vehicle. It
+supersedes affected recipes, rejects accepted candidates, and installs
+reviewed manager-host exclusions without changing the manager operating
+company's own profile.
+
+Two host-level ownership collisions proven by current content and another
+imported company's source inventory are retired: Public Storage sources
+assigned to National Storage Affiliates, and Lattice sources assigned to
+Maven. The sources, recipes, candidates, raw rows, and normalized items are
 retained under non-replay-safe `cross-company-source-ownership.v3`, while the
-wrong hosts are excluded from those two company profiles.
-Migration 0124 disables the exact Blackstone corporate-news and Sprott
-corporate-IR publications that composite revalidation proved were not scoped
-to Blackstone Mortgage Trust and Sprott Focus Trust. It does not exclude either
-manager host: fund-specific paths, including Sprott Focus Trust's dedicated
-press page, remain eligible.
-Migration 0125 reversibly quarantines residual HTML navigation hubs titled
-`Photos & Videos`, a terminal `Timeline`, or `View more from …`. The same
-provider-neutral policy now rejects those collection labels during every new
-normalization attempt.
-Migration 0126 reversibly quarantines a residual shallow collection whose
-listing supplied `All <page title>`, whose title matched its terminal URL
-segment, and whose body exposed at least four article elements. The runtime
-uses the same structural evidence, so this class cannot return after a later
-template refresh.
-Migration 0127 replaces the fixed one-running-company-news unique index with
-an indexed, transactional advisory-lock claim boundary. This preserves
-database-serialized claims while allowing the configured bounded job pipeline
-width.
-Migration 0128 reversibly quarantines exact investor utility labels and static
-governance, overview, shareholder, stock, and financial-information pages on
-conventional investor-relations subdomains. Explicit editorial path segments
-remain eligible, and the shared runtime policy applies the same distinction to
-future crawls.
-Migration 0129 reversibly quarantines HTML/browser rows that entered through
-the former implicit child-subdomain expansion and resolved to preview,
+wrong hosts are excluded from those two company profiles. The exact Blackstone
+corporate-news and Sprott corporate-IR publications that composite
+revalidation proved were not scoped to Blackstone Mortgage Trust and Sprott
+Focus Trust are disabled. Neither manager host is excluded: fund-specific
+paths, including Sprott Focus Trust's dedicated press page, remain eligible.
+
+The repair catalog reversibly quarantines residual HTML navigation hubs titled
+`Photos & Videos`, a terminal `Timeline`, or `View more from …`, plus shallow
+collections whose listing supplied `All <page title>`, whose title matched the
+terminal URL segment, and whose body exposed at least four article elements.
+The same provider-neutral runtime policy prevents those classes from returning
+after later template refreshes.
+
+The durable job model uses an indexed, transactional advisory-lock claim
+boundary. This preserves database-serialized claims while allowing the
+configured bounded job pipeline width.
+
+Exact investor utility labels and static governance, overview, shareholder,
+stock, and financial-information pages on conventional investor-relations
+subdomains are reversibly quarantined. Explicit editorial path segments remain
+eligible. HTML/browser rows that entered through the former implicit
+child-subdomain expansion are also quarantined when they resolve to preview,
 staging, test, or UAT environments, or to documentation/help/tutorial hosts
 without an editorial URL namespace. Exact evidence-backed hosts and
 documentation-host changelog/release/news paths remain eligible. The runtime
-uses the same host-boundary policy and also permits a proven editorial
-subdomain to link back to its parent company host.
-Migration 0130 reversibly quarantines market quote/profile utilities only when
-a bounded market-profile URL namespace and a stock/share price-or-quote title
-both match. The shared normalization policy rejects the same shape on future
-RSS, Atom, HTML, and browser observations while preserving substantive market
+uses the same host-boundary policy and permits a proven editorial subdomain to
+link back to its parent company host.
+
+Market quote/profile utilities are quarantined only when a bounded
+market-profile URL namespace and a stock/share price-or-quote title both
+match. The shared normalization policy rejects the same shape on future RSS,
+Atom, HTML, and browser observations while preserving substantive market
 articles.
 Runtime `company-scope-relevance.v4` handles mixed asset-manager collections:
 when a managed-vehicle recipe is revalidated, every public historical item for
 that source is checked with the same composite vehicle identity as the live
 sample. Off-vehicle rows are retained privately and are not automatically
 released by a later structural crawl.
-Export additionally requires `source.public_export_allowed`, applies the same
-active-recipe gate as the API, and withholds future-timestamped rows until
-their publication time arrives. An item hidden for recipe drift therefore
-cannot remain in a later Git materialization.
+Export applies the same active-recipe gate as the API and withholds
+future-timestamped rows until their publication time arrives. The default
+scope additionally requires `source.public_export_allowed`. A target may
+explicitly select `metadata.publication_scope=approved_public` to export every
+non-private item from an approved, currently valid source. An item hidden for
+recipe drift therefore cannot remain in a later Git materialization.
 
 ## Export Safety
 
 Git materialization and push are separate decisions:
 
 - `push_enabled` is target-level and defaults false;
-- `public_export_allowed` is source-level and validation defaults it false;
+- `public_export_allowed` is the default source-level gate and validation
+  defaults it false;
+- broader approved-source publication is an explicit target-level policy;
 - `export_runs` records commit and push results;
 - `exported_items` makes reruns idempotent.
 
 ## Local Validation
 
-`feed-db/build.rs` tracks the repository migration directory because
-`sqlx::migrate!` embeds migration files at compile time. Adding a migration
-therefore invalidates release/container builds even when Rust sources are
-unchanged.
+Inspect the generated plan before reconciling an existing database. The apply
+script prompts by default and requires explicit hazard allowances.
 
 ```bash
 docker compose up -d postgres
 export DATABASE_URL=postgresql://company_feed:company_feed@localhost:55432/company_feed
 
-cargo run -p feed-server
+scripts/schema-plan.sh
+SCHEMA_AUTO_APPROVE=true scripts/schema-apply.sh
 
 TEST_DATABASE_URL="$DATABASE_URL" \
   cargo test --workspace --all-features --all-targets -- --test-threads=1

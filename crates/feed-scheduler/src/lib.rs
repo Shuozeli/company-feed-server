@@ -292,6 +292,13 @@ impl<H: JobHandler> JobRunner<H> {
                                 "worker shut down during source crawl",
                             )
                             .await?;
+                    } else if claimed.job.job_type == JobType::CrawlContent {
+                        self.database
+                            .cancel_running_content_crawl_attempts_for_job(
+                                job_id,
+                                "worker shut down during content crawl",
+                            )
+                            .await?;
                     } else if claimed.job.job_type == JobType::ExtractCompanyNews {
                         self.database
                             .cancel_running_company_news_extractions_for_job(
@@ -337,6 +344,13 @@ impl<H: JobHandler> JobRunner<H> {
                                     "worker lost its lease during source crawl",
                                 )
                                 .await?;
+                        } else if claimed.job.job_type == JobType::CrawlContent {
+                            self.database
+                                .cancel_running_content_crawl_attempts_for_job(
+                                    job_id,
+                                    "worker lost its lease during content crawl",
+                                )
+                                .await?;
                         } else if claimed.job.job_type == JobType::ExtractCompanyNews {
                             self.database
                                 .cancel_running_company_news_extractions_for_job(
@@ -371,6 +385,13 @@ impl<H: JobHandler> JobRunner<H> {
                         .cancel_running_crawl_runs_for_job(
                             job_id,
                             &format!("source crawl handler returned an error: {handler_error}"),
+                        )
+                        .await?;
+                } else if claimed.job.job_type == JobType::CrawlContent {
+                    self.database
+                        .cancel_running_content_crawl_attempts_for_job(
+                            job_id,
+                            &format!("content crawl handler returned an error: {handler_error}"),
                         )
                         .await?;
                 } else if claimed.job.job_type == JobType::ExtractCompanyNews {

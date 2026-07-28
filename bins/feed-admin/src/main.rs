@@ -53,6 +53,11 @@ enum Command {
         #[arg(long)]
         source_id: Option<Uuid>,
     },
+    /// Operate the independent article-page content hydration pipeline.
+    ContentCrawl {
+        #[command(subcommand)]
+        command: ContentCrawlCommand,
+    },
     /// Manually build and validate durable news/blog crawl recipes.
     #[command(name = "news-import", visible_alias = "news-extract")]
     NewsImport {
@@ -149,6 +154,22 @@ enum CandidateCommand {
 }
 
 #[derive(Debug, Subcommand)]
+enum ContentCrawlCommand {
+    /// Queue the next due batch for the content worker.
+    Enqueue {
+        #[arg(long, default_value_t = 200)]
+        min_content_chars: i32,
+        #[arg(long, default_value_t = 2_592_000)]
+        refresh_seconds: i64,
+    },
+    /// Print durable crawl and article-body coverage as JSON.
+    Status {
+        #[arg(long, default_value_t = 200)]
+        min_content_chars: i32,
+    },
+}
+
+#[derive(Debug, Subcommand)]
 enum CompanyCommand {
     /// Validate and atomically import a company-universe.v2 JSON document.
     Import {
@@ -219,13 +240,14 @@ async fn main() -> Result<()> {
     let database = Database::connect(database_url, cli.database_max_connections)
         .await
         .context("connect to Postgres")?;
-    database.migrate().await.context("run migrations")?;
+    database.ensure_schema().await.context("ensure schema")?;
 
     match cli.command {
         Command::Discover { company } => queue_discovery(&database, company.as_deref()).await?,
         Command::Companies { command } => handle_companies(&database, command).await?,
         Command::Candidates { command } => handle_candidates(&database, command).await?,
         Command::Crawl { source_id } => queue_crawl(&database, source_id).await?,
+        Command::ContentCrawl { command } => handle_content_crawl(&database, command).await?,
         Command::NewsImport {
             company,
             all,
@@ -259,6 +281,52 @@ async fn main() -> Result<()> {
     }
 
     database.close().await;
+    Ok(())
+}
+
+async fn handle_content_crawl(database: &Database, command: ContentCrawlCommand) -> Result<()> {
+    match command {
+        ContentCrawlCommand::Enqueue {
+            min_content_chars,
+            refresh_seconds,
+        } => {
+            if min_content_chars <= 0 {
+                bail!("min-content-chars must be positive");
+            }
+            if refresh_seconds <= 0 {
+                bail!("refresh-seconds must be positive");
+            }
+            let now = Utc::now();
+            let scheduled = database
+                .enqueue_due_content_crawl_job(
+                    now,
+                    now - chrono::Duration::seconds(refresh_seconds),
+                    min_content_chars,
+                    1,
+                )
+                .await
+                .context("queue article content crawl")?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "scheduled_jobs": scheduled,
+                    "job_type": JobType::CrawlContent,
+                    "min_content_chars": min_content_chars,
+                    "refresh_seconds": refresh_seconds,
+                }))?
+            );
+        }
+        ContentCrawlCommand::Status { min_content_chars } => {
+            if min_content_chars <= 0 {
+                bail!("min-content-chars must be positive");
+            }
+            let coverage = database
+                .content_crawl_coverage(min_content_chars)
+                .await
+                .context("load article content crawl coverage")?;
+            println!("{}", serde_json::to_string_pretty(&coverage)?);
+        }
+    }
     Ok(())
 }
 

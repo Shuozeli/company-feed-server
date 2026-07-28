@@ -23,9 +23,9 @@ async fn main() -> Result<()> {
         .await
         .context("connect to Postgres")?;
     database
-        .migrate()
+        .ensure_schema()
         .await
-        .context("run database migrations")?;
+        .context("ensure database schema")?;
     database
         .sync_seed_config(&companies, &export_targets)
         .await

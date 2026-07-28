@@ -13,16 +13,18 @@ pub enum JobType {
     DiscoverCompany,
     ValidateCandidate,
     CrawlSource,
+    CrawlContent,
     ExtractCompanyNews,
     ExportTarget,
     NormalizeBackfill,
 }
 
 impl JobType {
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::DiscoverCompany,
         Self::ValidateCandidate,
         Self::CrawlSource,
+        Self::CrawlContent,
         Self::ExtractCompanyNews,
         Self::ExportTarget,
         Self::NormalizeBackfill,
@@ -33,6 +35,7 @@ impl JobType {
             Self::DiscoverCompany => "discover_company",
             Self::ValidateCandidate => "validate_candidate",
             Self::CrawlSource => "crawl_source",
+            Self::CrawlContent => "crawl_content",
             Self::ExtractCompanyNews => "extract_company_news",
             Self::ExportTarget => "export_target",
             Self::NormalizeBackfill => "normalize_backfill",
@@ -54,6 +57,7 @@ impl FromStr for JobType {
             "discover_company" => Ok(Self::DiscoverCompany),
             "validate_candidate" => Ok(Self::ValidateCandidate),
             "crawl_source" => Ok(Self::CrawlSource),
+            "crawl_content" => Ok(Self::CrawlContent),
             "extract_company_news" => Ok(Self::ExtractCompanyNews),
             "export_target" => Ok(Self::ExportTarget),
             "normalize_backfill" => Ok(Self::NormalizeBackfill),

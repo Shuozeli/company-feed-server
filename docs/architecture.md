@@ -53,6 +53,14 @@ feed-worker
   +--> raw_crawl_items
   +--> feed-content + normalizer
   +--> feed_items + source_state
+  +--> article identities and initial normalized feed payloads
+  |
+  v
+feed-content-worker
+  |
+  +--> independent public article-page fetch
+  +--> sanitized HTML, Markdown, and plain text
+  +--> durable retry, extraction-version, and freshness state
   +--> optional Git archive
   |
   v
@@ -82,7 +90,7 @@ company-feed-server/
   Dockerfile
   docker-compose.yml
   configs/
-  migrations/
+  schema/
   crates/
     feed-core/
     feed-universe/
@@ -101,6 +109,7 @@ company-feed-server/
     feed-discovery-worker/
     feed-validation-worker/
     feed-news-extraction-worker/
+    feed-content-worker/
     feed-worker/
     feed-admin/
 ```
@@ -116,6 +125,7 @@ Each long-running binary advertises and claims only its supported job types:
 | `feed-validation-worker` | `validate_candidate` | health/readiness |
 | `feed-worker` | `crawl_source`, `export_target` | health/readiness |
 | `feed-news-extraction-worker` | `extract_company_news` | health/readiness |
+| `feed-content-worker` | `crawl_content` | health/readiness |
 
 `feed-admin` inserts the same durable jobs and invokes the same transactional
 decision contracts. It has no private discovery, crawler, or exporter

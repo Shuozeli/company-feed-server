@@ -44,7 +44,6 @@ sqlx = { version = "0.8", default-features = false, features = [
   "chrono",
   "json",
   "macros",
-  "migrate",
   "postgres",
   "runtime-tokio-rustls",
   "uuid",

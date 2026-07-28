@@ -1,4 +1,5 @@
 mod config_sync;
+mod content_crawling;
 mod crawling;
 mod discovery;
 mod exports;
@@ -12,14 +13,14 @@ mod validation;
 
 use std::time::Duration;
 
-use sqlx::{
-    PgPool,
-    migrate::{MigrateError, Migrator},
-    postgres::PgPoolOptions,
-};
+use sqlx::{PgPool, postgres::PgPoolOptions};
 use uuid::Uuid;
 
 pub use config_sync::ConfigSyncSummary;
+pub use content_crawling::{
+    CONTENT_EXTRACTION_VERSION, ContentCrawlCandidate, ContentCrawlCoverage, ContentCrawlFailure,
+    ContentCrawlSuccess,
+};
 pub use crawling::{CrawlPersistSummary, FeedItemQualityQuarantine, RecipeArtifactFailure};
 pub use feeds::{
     ApprovedFeedItemCompanyClaim, FeedItemSignatureCandidate, FeedItemSummaryFilter,
@@ -37,7 +38,8 @@ pub use universe::{
 };
 pub use validation::CandidateValidationCompletion;
 
-static MIGRATOR: Migrator = sqlx::migrate!("../../migrations");
+const POSTGRES_SCHEMA: &str = include_str!("../../../schema/postgres.sql");
+const SCHEMA_LOCK_KEY: i64 = 0x4346_5343_4845_4D41;
 
 #[derive(Clone, Debug)]
 pub struct Database {
@@ -62,8 +64,55 @@ impl Database {
         &self.pool
     }
 
-    pub async fn migrate(&self) -> Result<(), DatabaseError> {
-        MIGRATOR.run(&self.pool).await?;
+    /// Initializes a brand-new database from the declarative schema and
+    /// verifies that an existing database has already been reconciled.
+    ///
+    /// Existing databases are changed only by `pg-schema-diff`; application
+    /// startup never executes a hand-written or embedded migration sequence.
+    pub async fn ensure_schema(&self) -> Result<(), DatabaseError> {
+        let mut connection = self.pool.acquire().await?;
+        sqlx::query("SELECT pg_advisory_lock($1)")
+            .bind(SCHEMA_LOCK_KEY)
+            .execute(&mut *connection)
+            .await?;
+
+        let result = async {
+            let schema_exists: bool =
+                sqlx::query_scalar("SELECT to_regclass('public.jobs') IS NOT NULL")
+                    .fetch_one(&mut *connection)
+                    .await?;
+            if !schema_exists {
+                sqlx::raw_sql(POSTGRES_SCHEMA)
+                    .execute(&mut *connection)
+                    .await?;
+            }
+
+            let schema_ready: bool = sqlx::query_scalar(
+                r#"
+                SELECT
+                    to_regclass('public.jobs') IS NOT NULL
+                    AND to_regclass('public.content_crawl_state') IS NOT NULL
+                    AND to_regclass('public.content_crawl_attempts') IS NOT NULL
+                "#,
+            )
+            .fetch_one(&mut *connection)
+            .await?;
+            if !schema_ready {
+                return Err(DatabaseError::SchemaDrift(
+                    "database does not match schema/postgres.sql; run scripts/schema-apply.sh"
+                        .to_owned(),
+                ));
+            }
+            Ok(())
+        }
+        .await;
+
+        let unlock_result = sqlx::query("SELECT pg_advisory_unlock($1)")
+            .bind(SCHEMA_LOCK_KEY)
+            .execute(&mut *connection)
+            .await;
+        result?;
+        unlock_result?;
         Ok(())
     }
 
@@ -81,8 +130,8 @@ impl Database {
 pub enum DatabaseError {
     #[error(transparent)]
     Sqlx(#[from] sqlx::Error),
-    #[error(transparent)]
-    Migration(#[from] MigrateError),
+    #[error("database schema drift: {0}")]
+    SchemaDrift(String),
     #[error(transparent)]
     InvalidEnum(#[from] feed_core::EnumParseError),
     #[error(transparent)]

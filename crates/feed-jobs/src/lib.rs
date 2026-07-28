@@ -1,6 +1,6 @@
 use std::{
     cmp::Reverse,
-    collections::{BTreeMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     sync::Arc,
 };
 
@@ -15,15 +15,17 @@ use feed_core::{
     is_cms_placeholder_article, is_non_editorial_utility_article, is_sitemap_url,
 };
 use feed_crawler::{
-    ArticleFetchFailure, ArticlePageError, CrawlError, HtmlArticleCrawlReport, HtmlArticleCrawler,
-    HtmlArticleCrawlerConfig, HtmlRecipeCrawlCache, HtmlRecipeCrawlReport, HtmlRecipeCrawler,
-    HtmlRecipeCrawlerConfig, RecipeCrawlError, RssAtomCrawler, RssAtomCrawlerConfig,
-    distinct_sanitized_content_count, repeated_sanitized_content_urls,
+    ArticleCrawlCandidate, ArticleFetchFailure, ArticlePageError, CrawlError,
+    HtmlArticleCrawlReport, HtmlArticleCrawler, HtmlArticleCrawlerConfig, HtmlRecipeCrawlCache,
+    HtmlRecipeCrawlReport, HtmlRecipeCrawler, HtmlRecipeCrawlerConfig, RecipeCrawlError,
+    RssAtomCrawler, RssAtomCrawlerConfig, distinct_sanitized_content_count,
+    repeated_sanitized_content_urls,
 };
 use feed_db::{
     ActiveCompanyNewsPublicationClaim, ApprovedFeedItemCompanyClaim, ApprovedSourceCompanyClaim,
     CandidateValidationCompletion, CompanyNewsExtractionCompletion, CompanyNewsRecipeRunCompletion,
-    Database, FeedItemQualityQuarantine, FeedItemSignatureCandidate, PublicFeedItemCompanyClaim,
+    ContentCrawlCandidate, ContentCrawlFailure, ContentCrawlSuccess, Database,
+    FeedItemQualityQuarantine, FeedItemSignatureCandidate, PublicFeedItemCompanyClaim,
     RecipeArtifactFailure,
 };
 use feed_discovery::{DiscoveryClient, DiscoveryConfig, DiscoveryError, DiscoverySeed};
@@ -116,6 +118,42 @@ pub fn build_crawl_export_job_registry(
         .register(Arc::new(ExportJobHandler::new(database)))?)
 }
 
+pub fn build_content_crawl_job_registry(
+    database: Database,
+    settings: &AppSettings,
+) -> Result<JobHandlerRegistry, JobBootstrapError> {
+    let crawler = HtmlArticleCrawler::new(HtmlArticleCrawlerConfig {
+        request_timeout: settings.content_crawl_fetch_timeout,
+        max_response_bytes: settings.content_crawl_max_response_bytes,
+        max_articles: settings.content_crawl_batch_size,
+        max_concurrency: settings.content_crawl_max_concurrency,
+        max_per_host_concurrency: settings.content_crawl_max_per_host_concurrency,
+        min_content_chars: settings.content_crawl_min_content_chars,
+        allow_private_networks: false,
+        user_agent: settings.public_fetch_user_agent.clone(),
+    })?;
+    let handler = ContentCrawlJobHandler {
+        database,
+        crawler,
+        batch_size: i64::try_from(settings.content_crawl_batch_size).map_err(|_| {
+            JobBootstrapError::InvalidConfig(
+                "CONTENT_CRAWL_BATCH_SIZE exceeds the supported range".to_owned(),
+            )
+        })?,
+        min_existing_content_chars: i32::try_from(settings.content_crawl_min_content_chars)
+            .map_err(|_| {
+                JobBootstrapError::InvalidConfig(
+                    "CONTENT_CRAWL_MIN_CONTENT_CHARS exceeds the supported range".to_owned(),
+                )
+            })?,
+        refresh: settings.content_crawl_refresh,
+        max_attempts: settings.content_crawl_max_attempts,
+        retry_base: settings.job_retry_base,
+        retry_max: settings.job_retry_max,
+    };
+    Ok(JobHandlerRegistry::new().register(Arc::new(handler))?)
+}
+
 pub fn build_news_extraction_job_registry(
     database: Database,
     settings: &AppSettings,
@@ -191,6 +229,215 @@ fn build_recipe_crawler(settings: &AppSettings) -> Result<HtmlRecipeCrawler, Rec
         user_agent: settings.public_fetch_user_agent.clone(),
         ..HtmlRecipeCrawlerConfig::default()
     })
+}
+
+#[derive(Clone)]
+pub struct ContentCrawlJobHandler {
+    database: Database,
+    crawler: HtmlArticleCrawler,
+    batch_size: i64,
+    min_existing_content_chars: i32,
+    refresh: std::time::Duration,
+    max_attempts: i32,
+    retry_base: std::time::Duration,
+    retry_max: std::time::Duration,
+}
+
+#[async_trait]
+impl JobHandler for ContentCrawlJobHandler {
+    fn supported_job_types(&self) -> &[JobType] {
+        &[JobType::CrawlContent]
+    }
+
+    async fn handle(&self, job: &Job) -> Result<(), JobHandlerError> {
+        let now = Utc::now();
+        let refresh = Duration::from_std(self.refresh)
+            .map_err(|_| JobHandlerError::permanent("content refresh duration is out of range"))?;
+        let candidates = self
+            .database
+            .begin_content_crawl_batch(
+                job.id,
+                now,
+                now - refresh,
+                self.min_existing_content_chars,
+                self.batch_size,
+            )
+            .await
+            .map_err(|error| JobHandlerError::retryable(error.to_string()))?;
+        if candidates.is_empty() {
+            info!(job_id = %job.id, "content crawl queue is caught up");
+            return Ok(());
+        }
+
+        let mut by_url = BTreeMap::<String, Vec<ContentCrawlCandidate>>::new();
+        for candidate in candidates {
+            by_url
+                .entry(candidate.url.as_str().to_owned())
+                .or_default()
+                .push(candidate);
+        }
+        let requests = by_url
+            .values()
+            .filter_map(|group| group.first())
+            .map(|candidate| {
+                ArticleCrawlCandidate::new(candidate.url.clone()).with_hints(
+                    Some(candidate.title_hint.clone()),
+                    candidate.published_at_hint,
+                )
+            })
+            .collect::<Vec<_>>();
+        let report = self
+            .crawler
+            .crawl_content_candidates(&requests)
+            .await
+            .map_err(|error| JobHandlerError::retryable(error.to_string()))?;
+
+        let mut fetched = HashMap::<String, RawCrawlItem>::new();
+        for item in report.items {
+            let requested_url = item
+                .payload
+                .get("requested_url")
+                .and_then(Value::as_str)
+                .unwrap_or_else(|| item.url.as_str())
+                .to_owned();
+            fetched.insert(requested_url, item);
+        }
+        let failures = report
+            .failures
+            .into_iter()
+            .map(|failure| (failure.url.as_str().to_owned(), failure))
+            .collect::<HashMap<_, _>>();
+
+        let mut sources = HashMap::<uuid::Uuid, Source>::new();
+        let mut succeeded = 0_u64;
+        let mut failed = 0_u64;
+        for (requested_url, group) in by_url {
+            if let Some(raw) = fetched.get(&requested_url) {
+                for candidate in group {
+                    let source = match sources.get(&candidate.source_id).cloned() {
+                        Some(source) => source,
+                        None => {
+                            let source = self
+                                .database
+                                .get_source(candidate.source_id)
+                                .await
+                                .map_err(|error| JobHandlerError::retryable(error.to_string()))?
+                                .ok_or_else(|| {
+                                    JobHandlerError::permanent(format!(
+                                        "content crawl source {} does not exist",
+                                        candidate.source_id
+                                    ))
+                                })?;
+                            sources.insert(candidate.source_id, source.clone());
+                            source
+                        }
+                    };
+                    match normalize_item(&source, raw, report.fetched_at) {
+                        Ok(normalized) => {
+                            self.database
+                                .complete_content_crawl_success(
+                                    &ContentCrawlSuccess {
+                                        attempt_id: candidate.attempt_id,
+                                        feed_item_id: candidate.feed_item_id,
+                                        requested_url: candidate.url,
+                                        normalized,
+                                        extraction_metadata: raw.payload.clone(),
+                                    },
+                                    self.refresh,
+                                )
+                                .await
+                                .map_err(|error| JobHandlerError::retryable(error.to_string()))?;
+                            succeeded += 1;
+                        }
+                        Err(error) => {
+                            let failure = self.content_failure(
+                                &candidate,
+                                "normalization_failed",
+                                false,
+                                error.to_string(),
+                                None,
+                                now,
+                            );
+                            self.database
+                                .complete_content_crawl_failure(&failure)
+                                .await
+                                .map_err(|error| JobHandlerError::retryable(error.to_string()))?;
+                            failed += 1;
+                        }
+                    }
+                }
+                continue;
+            }
+
+            let reported = failures.get(&requested_url);
+            for candidate in group {
+                let failure = self.content_failure(
+                    &candidate,
+                    reported
+                        .map(|failure| failure.reason.as_str())
+                        .unwrap_or("missing_crawl_result"),
+                    reported.is_none_or(|failure| failure.retryable),
+                    reported
+                        .map(|failure| failure.error.clone())
+                        .unwrap_or_else(|| {
+                            "article crawler returned neither content nor a failure".to_owned()
+                        }),
+                    None,
+                    now,
+                );
+                self.database
+                    .complete_content_crawl_failure(&failure)
+                    .await
+                    .map_err(|error| JobHandlerError::retryable(error.to_string()))?;
+                failed += 1;
+            }
+        }
+
+        info!(
+            job_id = %job.id,
+            requested_urls = requests.len(),
+            succeeded,
+            failed,
+            "content crawl batch completed"
+        );
+        Ok(())
+    }
+}
+
+impl ContentCrawlJobHandler {
+    fn content_failure(
+        &self,
+        candidate: &ContentCrawlCandidate,
+        reason: &str,
+        retryable: bool,
+        error: String,
+        http_status: Option<i32>,
+        now: chrono::DateTime<Utc>,
+    ) -> ContentCrawlFailure {
+        let can_retry = retryable && candidate.attempt_count < self.max_attempts;
+        let next_attempt_at = can_retry.then(|| {
+            let exponent = u32::try_from(candidate.attempt_count.saturating_sub(1))
+                .unwrap_or(u32::MAX)
+                .min(30);
+            let multiplier = 1_u32.checked_shl(exponent).unwrap_or(u32::MAX);
+            let delay = self
+                .retry_base
+                .saturating_mul(multiplier)
+                .min(self.retry_max);
+            let delay = Duration::from_std(delay).unwrap_or(Duration::MAX);
+            now + delay
+        });
+        ContentCrawlFailure {
+            attempt_id: candidate.attempt_id,
+            feed_item_id: candidate.feed_item_id,
+            requested_url: candidate.url.clone(),
+            reason: reason.to_owned(),
+            retryable: can_retry,
+            error,
+            http_status,
+            next_attempt_at,
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -7620,6 +7867,80 @@ impl ValidationJobProducer {
 pub struct CrawlExportJobProducer {
     database: Database,
     scan_interval: std::time::Duration,
+}
+
+#[derive(Clone)]
+pub struct ContentCrawlJobProducer {
+    database: Database,
+    scan_interval: std::time::Duration,
+    refresh: std::time::Duration,
+    min_existing_content_chars: i32,
+    job_concurrency: i32,
+}
+
+impl ContentCrawlJobProducer {
+    pub fn new(
+        database: Database,
+        scan_interval: std::time::Duration,
+        refresh: std::time::Duration,
+        min_existing_content_chars: usize,
+        job_concurrency: u32,
+    ) -> Result<Self, JobBootstrapError> {
+        Ok(Self {
+            database,
+            scan_interval,
+            refresh,
+            min_existing_content_chars: i32::try_from(min_existing_content_chars).map_err(
+                |_| {
+                    JobBootstrapError::InvalidConfig(
+                        "CONTENT_CRAWL_MIN_CONTENT_CHARS exceeds the supported range".to_owned(),
+                    )
+                },
+            )?,
+            job_concurrency: i32::try_from(job_concurrency).map_err(|_| {
+                JobBootstrapError::InvalidConfig(
+                    "CONTENT_CRAWL_JOB_CONCURRENCY exceeds the supported range".to_owned(),
+                )
+            })?,
+        })
+    }
+
+    pub async fn schedule_once(&self) -> Result<u64, feed_db::DatabaseError> {
+        let now = Utc::now();
+        let refresh = Duration::from_std(self.refresh)
+            .map_err(|_| feed_db::DatabaseError::InvalidDuration(self.refresh))?;
+        self.database
+            .enqueue_due_content_crawl_job(
+                now,
+                now - refresh,
+                self.min_existing_content_chars,
+                self.job_concurrency,
+            )
+            .await
+    }
+
+    pub async fn run_until_cancelled(&self, shutdown: CancellationToken) {
+        info!("content crawl job producer started");
+        loop {
+            if shutdown.is_cancelled() {
+                break;
+            }
+            match self.schedule_once().await {
+                Ok(scheduled) if scheduled > 0 => {
+                    info!(scheduled, "scheduled content crawl job");
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    error!(%error, "failed to schedule content crawl job");
+                }
+            }
+            tokio::select! {
+                _ = shutdown.cancelled() => break,
+                _ = tokio::time::sleep(self.scan_interval) => {}
+            }
+        }
+        info!("content crawl job producer stopped");
+    }
 }
 
 impl CrawlExportJobProducer {

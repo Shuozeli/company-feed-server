@@ -18,7 +18,7 @@ Browser rendering remains an optional adapter expansion.
 
 - [x] Add Rust workspace.
 - [x] Add Docker Compose Postgres.
-- [x] Add `sqlx` migrations.
+- [x] Add a declarative PostgreSQL schema and generated diff/apply workflow.
 - [x] Implement validated config loading and synchronization.
 - [x] Implement the initial DB access layer.
 - [x] Add lease-fenced durable jobs, retries, and stale-worker recovery.
@@ -45,8 +45,9 @@ Browser rendering remains an optional adapter expansion.
 - [x] Initial owned HTML sanitizer.
 - [x] Initial deterministic HTML-to-Markdown converter.
 - [x] Plain-text extraction and initial content-processing metrics.
-- Golden tests with representative company newsroom HTML snippets.
-- Article-body extraction, size guards, and Markdown edge-case hardening.
+- [x] Golden tests with representative company newsroom HTML snippets.
+- [x] Independent article-body extraction, size guards, durable retries,
+  freshness refresh, and Markdown edge-case hardening.
 
 ## Phase 5: Normalization
 
@@ -56,7 +57,8 @@ Browser rendering remains an optional adapter expansion.
 
 ## Phase 6: API
 
-- [x] Add `feed-server` startup, migrations, config synchronization, and graceful shutdown.
+- [x] Add `feed-server` startup, schema verification, config synchronization,
+  and graceful shutdown.
 - [x] Expose health and Postgres readiness.
 - [x] Expose companies, candidates, sources, items, health, and run history.
 - [x] Add bounded pagination and filters.
@@ -71,8 +73,8 @@ Browser rendering remains an optional adapter expansion.
 - [x] Add optional `feed-worker` runtime with health/readiness.
 - [x] Implement SLO selection.
 - [x] Implement backoff and zero-run health.
-- Add per-domain limits.
-- Add configurable in-process crawl concurrency.
+- [x] Add per-domain limits.
+- [x] Add configurable in-process content-crawl concurrency.
 
 ## Phase 8: HTML and Browser Fallback
 

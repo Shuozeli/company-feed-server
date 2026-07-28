@@ -7,3 +7,5 @@ targets:
     layout: by_company_date
     cadence_seconds: 3600
     push_enabled: false
+    metadata:
+      publication_scope: approved_public

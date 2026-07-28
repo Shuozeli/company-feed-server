@@ -15,6 +15,33 @@ services:
       timeout: 5s
       retries: 10
 
+  schema:
+    image: ${COMPANY_FEED_IMAGE:-company-feed-server:local}
+    build:
+      context: .
+    entrypoint: ["pg-schema-diff"]
+    command:
+      - apply
+      - --from-empty-dsn
+      - --to-dir
+      - /app/schema
+      - --include-schema
+      - public
+      - --skip-confirm-prompt
+      - --allow-hazards
+      - ${SCHEMA_ALLOW_HAZARDS:-INDEX_BUILD}
+    environment:
+      PGHOST: postgres
+      PGPORT: "5432"
+      PGDATABASE: ${POSTGRES_DB:-company_feed}
+      PGUSER: ${POSTGRES_USER:-company_feed}
+      PGPASSWORD: ${POSTGRES_PASSWORD:-company_feed}
+      PGSSLMODE: disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
   server:
     image: ${COMPANY_FEED_IMAGE:-company-feed-server:local}
     build:
@@ -32,8 +59,8 @@ services:
       - ./configs:/app/configs:ro
       - export-data:/app/exports
     depends_on:
-      postgres:
-        condition: service_healthy
+      schema:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8080/ready"]
       interval: 10s
@@ -63,8 +90,8 @@ services:
       - ./configs:/app/configs:ro
       - export-data:/app/exports
     depends_on:
-      postgres:
-        condition: service_healthy
+      schema:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8081/ready"]
       interval: 10s
@@ -106,8 +133,8 @@ services:
     volumes:
       - ./configs:/app/configs:ro
     depends_on:
-      postgres:
-        condition: service_healthy
+      schema:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8082/ready"]
       interval: 10s
@@ -138,8 +165,8 @@ services:
     ports:
       - "127.0.0.1:${VALIDATION_WORKER_PORT:-8083}:8083"
     depends_on:
-      postgres:
-        condition: service_healthy
+      schema:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8083/ready"]
       interval: 10s
@@ -186,10 +213,53 @@ services:
     volumes:
       - ./configs:/app/configs:ro
     depends_on:
-      postgres:
-        condition: service_healthy
+      schema:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8084/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+
+  content-worker:
+    profiles: ["content-crawl"]
+    image: ${COMPANY_FEED_IMAGE:-company-feed-server:local}
+    build:
+      context: .
+    entrypoint: ["feed-content-worker"]
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-company_feed}:${POSTGRES_PASSWORD:-company_feed}@postgres:5432/${POSTGRES_DB:-company_feed}
+      RUST_LOG: ${RUST_LOG:-info,feed_content_worker=debug}
+      PUBLIC_FETCH_USER_AGENT: ${PUBLIC_FETCH_USER_AGENT:-CompanyFeedServer/0.1 (+https://github.com/Shuozeli/company-feed-server)}
+      CONTENT_CRAWL_WORKER_BIND_ADDR: 0.0.0.0:8085
+      CONTENT_CRAWL_ENABLED: ${CONTENT_CRAWL_ENABLED:-true}
+      CONTENT_CRAWL_RUN_JOBS: ${CONTENT_CRAWL_RUN_JOBS:-true}
+      CONTENT_CRAWL_JOB_CONCURRENCY: ${CONTENT_CRAWL_JOB_CONCURRENCY:-1}
+      CONTENT_CRAWL_BATCH_SIZE: ${CONTENT_CRAWL_BATCH_SIZE:-100}
+      CONTENT_CRAWL_FETCH_TIMEOUT_SECONDS: ${CONTENT_CRAWL_FETCH_TIMEOUT_SECONDS:-20}
+      CONTENT_CRAWL_MAX_RESPONSE_BYTES: ${CONTENT_CRAWL_MAX_RESPONSE_BYTES:-8388608}
+      CONTENT_CRAWL_MAX_CONCURRENCY: ${CONTENT_CRAWL_MAX_CONCURRENCY:-24}
+      CONTENT_CRAWL_MAX_PER_HOST_CONCURRENCY: ${CONTENT_CRAWL_MAX_PER_HOST_CONCURRENCY:-2}
+      CONTENT_CRAWL_MIN_CONTENT_CHARS: ${CONTENT_CRAWL_MIN_CONTENT_CHARS:-200}
+      CONTENT_CRAWL_REFRESH_SECONDS: ${CONTENT_CRAWL_REFRESH_SECONDS:-2592000}
+      CONTENT_CRAWL_MAX_ATTEMPTS: ${CONTENT_CRAWL_MAX_ATTEMPTS:-5}
+      COMPANIES_CONFIG: ${COMPANIES_CONFIG:-/app/configs/companies.yaml}
+      EXPORT_TARGETS_CONFIG: ${EXPORT_TARGETS_CONFIG:-/app/configs/export_targets.yaml}
+    ports:
+      - "127.0.0.1:${CONTENT_CRAWL_WORKER_PORT:-8085}:8085"
+    volumes:
+      - ./configs:/app/configs:ro
+    depends_on:
+      schema:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8085/ready"]
       interval: 10s
       timeout: 5s
       retries: 10

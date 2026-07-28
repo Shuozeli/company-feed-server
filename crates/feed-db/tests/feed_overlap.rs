@@ -25,7 +25,7 @@ async fn news_summaries_do_not_resurface_undated_items_after_recrawl() {
     let database = Database::connect(&database_url, 5)
         .await
         .expect("connect to test Postgres");
-    database.migrate().await.expect("run migrations");
+    database.ensure_schema().await.expect("ensure schema");
     let _test_lock = acquire_test_lock(&database).await;
 
     let suffix = Uuid::new_v4().simple().to_string();
@@ -157,7 +157,7 @@ async fn news_summaries_collapse_dated_cross_property_story_mirrors() {
     let database = Database::connect(&database_url, 5)
         .await
         .expect("connect to test Postgres");
-    database.migrate().await.expect("run migrations");
+    database.ensure_schema().await.expect("ensure schema");
     let _test_lock = acquire_test_lock(&database).await;
 
     let suffix = Uuid::new_v4().simple().to_string();
@@ -349,7 +349,7 @@ async fn approved_rss_and_atom_items_are_the_only_overlap_matches() {
     let database = Database::connect(&database_url, 5)
         .await
         .expect("connect to test Postgres");
-    database.migrate().await.expect("run migrations");
+    database.ensure_schema().await.expect("ensure schema");
     let _test_lock = acquire_test_lock(&database).await;
     let coverage_before = database
         .get_company_news_recipe_coverage()

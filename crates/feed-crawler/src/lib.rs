@@ -1,6 +1,7 @@
 use std::{
     collections::{HashMap, HashSet},
     net::{IpAddr, Ipv4Addr, Ipv6Addr},
+    sync::Arc,
     time::Duration,
 };
 
@@ -22,6 +23,7 @@ use scraper::{ElementRef, Html, Selector};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
+use tokio::sync::{Mutex, OwnedSemaphorePermit, Semaphore};
 use url::Url;
 
 #[derive(Clone, Debug)]
@@ -147,14 +149,37 @@ impl Default for HtmlArticleCrawlerConfig {
 pub struct HtmlArticleCrawler {
     client: Client,
     config: HtmlArticleCrawlerConfig,
+    request_slots: Arc<Semaphore>,
+    host_request_slots: Arc<Mutex<HashMap<String, Arc<Semaphore>>>>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct RecipeLink {
-    url: Url,
-    title_hint: Option<String>,
-    published_at_hint: Option<DateTime<Utc>>,
+pub struct ArticleCrawlCandidate {
+    pub url: Url,
+    pub title_hint: Option<String>,
+    pub published_at_hint: Option<DateTime<Utc>>,
     document_url: Option<Url>,
+}
+
+impl ArticleCrawlCandidate {
+    pub fn new(url: Url) -> Self {
+        Self {
+            url,
+            title_hint: None,
+            published_at_hint: None,
+            document_url: None,
+        }
+    }
+
+    pub fn with_hints(
+        mut self,
+        title_hint: Option<String>,
+        published_at_hint: Option<DateTime<Utc>>,
+    ) -> Self {
+        self.title_hint = title_hint;
+        self.published_at_hint = published_at_hint;
+        self
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -559,11 +584,11 @@ impl HtmlRecipeCrawler {
 
     async fn expand_archive_collections(
         &self,
-        links: Vec<RecipeLink>,
+        links: Vec<ArticleCrawlCandidate>,
         structure_fingerprint: String,
         recipe: &CompanyNewsRecipeSpec,
         cache: &mut HtmlRecipeCrawlCache,
-    ) -> (Vec<RecipeLink>, String) {
+    ) -> (Vec<ArticleCrawlCandidate>, String) {
         const MAX_ARCHIVE_COLLECTIONS: usize = 2;
 
         let archive_links = links
@@ -800,9 +825,21 @@ impl HtmlArticleCrawler {
             .timeout(config.request_timeout)
             .redirect(Policy::none())
             .no_proxy()
+            // Content hydration fans out across thousands of unrelated
+            // company hosts. Retaining one idle connection per origin can
+            // exhaust a worker's file-descriptor budget even though request
+            // concurrency is bounded. Article fetches are one-shot, so close
+            // each connection after its response instead of pooling it.
+            .pool_max_idle_per_host(0)
             .user_agent(&config.user_agent)
             .build()?;
-        Ok(Self { client, config })
+        let request_slots = Arc::new(Semaphore::new(config.max_concurrency));
+        Ok(Self {
+            client,
+            config,
+            request_slots,
+            host_request_slots: Arc::new(Mutex::new(HashMap::new())),
+        })
     }
 
     pub async fn crawl_urls(
@@ -812,26 +849,39 @@ impl HtmlArticleCrawler {
         let candidates = urls
             .iter()
             .cloned()
-            .map(|url| RecipeLink {
+            .map(|url| ArticleCrawlCandidate {
                 url,
                 title_hint: None,
                 published_at_hint: None,
                 document_url: None,
             })
             .collect::<Vec<_>>();
-        self.crawl_candidates(&candidates).await
+        self.crawl_candidates(&candidates, true).await
+    }
+
+    /// Fetches independent article bodies for URLs that were already
+    /// discovered by a feed or listing crawl.
+    ///
+    /// Cross-document repeated-content rejection is disabled here because a
+    /// mixed-company batch can legitimately contain syndicated releases.
+    pub async fn crawl_content_candidates(
+        &self,
+        candidates: &[ArticleCrawlCandidate],
+    ) -> Result<HtmlArticleCrawlReport, ArticlePageError> {
+        self.crawl_candidates(candidates, false).await
     }
 
     async fn crawl_recipe_links(
         &self,
-        links: &[RecipeLink],
+        links: &[ArticleCrawlCandidate],
     ) -> Result<HtmlArticleCrawlReport, ArticlePageError> {
-        self.crawl_candidates(links).await
+        self.crawl_candidates(links, true).await
     }
 
     async fn crawl_candidates(
         &self,
-        candidates: &[RecipeLink],
+        candidates: &[ArticleCrawlCandidate],
+        reject_repeated_content: bool,
     ) -> Result<HtmlArticleCrawlReport, ArticlePageError> {
         if candidates.len() > self.config.max_articles {
             return Err(ArticlePageError::TooManyUrls {
@@ -919,7 +969,9 @@ impl HtmlArticleCrawler {
             }
         }
         items.sort_by(|left, right| left.url.as_str().cmp(right.url.as_str()));
-        reject_repeated_sanitized_content(&mut items, &mut failures);
+        if reject_repeated_content {
+            reject_repeated_sanitized_content(&mut items, &mut failures);
+        }
         failures.sort_by(|left, right| left.url.as_str().cmp(right.url.as_str()));
         Ok(HtmlArticleCrawlReport {
             fetched_at,
@@ -940,6 +992,7 @@ impl HtmlArticleCrawler {
             if !self.config.allow_private_networks {
                 validate_article_resolved_target(&current_url).await?;
             }
+            let request_permits = self.acquire_request_permits(&current_url).await;
             let response = self
                 .client
                 .get(current_url.clone())
@@ -1013,6 +1066,7 @@ impl HtmlArticleCrawler {
                 }
                 body.extend_from_slice(&chunk);
             }
+            drop(request_permits);
             let extraction = extract_article_with_hints(
                 requested_url,
                 final_url.clone(),
@@ -1178,6 +1232,7 @@ impl HtmlArticleCrawler {
             if !self.config.allow_private_networks {
                 validate_article_resolved_target(&current_url).await?;
             }
+            let request_permits = self.acquire_request_permits(&current_url).await;
             let response = self
                 .client
                 .get(current_url.clone())
@@ -1246,9 +1301,40 @@ impl HtmlArticleCrawler {
                 }
                 body.extend_from_slice(&chunk);
             }
+            drop(request_permits);
             return Ok(body);
         }
         unreachable!("framework resource redirect loop returns after success or the sixth redirect")
+    }
+
+    async fn acquire_request_permits(
+        &self,
+        url: &Url,
+    ) -> (OwnedSemaphorePermit, OwnedSemaphorePermit) {
+        let host_key = url
+            .host_str()
+            .map(normalized_host)
+            .unwrap_or_else(|| url.as_str().to_owned());
+        let host_slots = {
+            let mut by_host = self.host_request_slots.lock().await;
+            by_host
+                .entry(host_key)
+                .or_insert_with(|| Arc::new(Semaphore::new(self.config.max_per_host_concurrency)))
+                .clone()
+        };
+        // Acquire the host permit first so a queue for one busy origin does
+        // not consume the worker-wide budget and starve unrelated companies.
+        let host_permit = host_slots
+            .acquire_owned()
+            .await
+            .expect("article host semaphore is never closed");
+        let request_permit = self
+            .request_slots
+            .clone()
+            .acquire_owned()
+            .await
+            .expect("article request semaphore is never closed");
+        (request_permit, host_permit)
     }
 }
 
@@ -1263,7 +1349,7 @@ fn article_error_allows_document_listing_fallback(error: &ArticlePageError) -> b
 }
 
 fn document_backed_listing_item(
-    candidate: &RecipeLink,
+    candidate: &ArticleCrawlCandidate,
     fetched_at: DateTime<Utc>,
 ) -> Option<RawCrawlItem> {
     let document_url = candidate.document_url.as_ref()?.clone();
@@ -5708,7 +5794,7 @@ async fn extract_recipe_links_off_runtime(
     html: String,
     recipe: CompanyNewsRecipeSpec,
     hard_limit: usize,
-) -> Result<(Vec<RecipeLink>, String), RecipeCrawlError> {
+) -> Result<(Vec<ArticleCrawlCandidate>, String), RecipeCrawlError> {
     tokio::task::spawn_blocking(move || extract_recipe_links(&base_url, &html, &recipe, hard_limit))
         .await
         .map_err(|error| {
@@ -5721,7 +5807,7 @@ fn extract_recipe_links(
     html: &str,
     recipe: &CompanyNewsRecipeSpec,
     hard_limit: usize,
-) -> Result<(Vec<RecipeLink>, String), RecipeCrawlError> {
+) -> Result<(Vec<ArticleCrawlCandidate>, String), RecipeCrawlError> {
     let document = Html::parse_document(html);
     let configured_selector = Selector::parse(&recipe.article_link_selector)
         .map_err(|_| RecipeCrawlError::InvalidSelector(recipe.article_link_selector.clone()))?;
@@ -5811,7 +5897,7 @@ fn extract_recipe_links(
         );
         let canonical = url.as_str().to_owned();
         if let Some(existing_index) = seen.get(&canonical).copied() {
-            let existing: &mut RecipeLink = &mut urls[existing_index];
+            let existing: &mut ArticleCrawlCandidate = &mut urls[existing_index];
             if title_hint.as_ref().is_some_and(|candidate| {
                 existing.title_hint.as_ref().is_none_or(|current| {
                     listing_title_hint_priority(candidate, &url)
@@ -5838,7 +5924,7 @@ fn extract_recipe_links(
             .collect::<Vec<_>>()
             .join(".");
         signatures.push(format!("{}|{class}", anchor.value().name()));
-        urls.push(RecipeLink {
+        urls.push(ArticleCrawlCandidate {
             url,
             title_hint,
             published_at_hint,
@@ -5917,8 +6003,8 @@ fn is_release_document_url(url: &Url) -> bool {
 }
 
 fn normalize_double_encoded_article_candidates(
-    candidates: &[RecipeLink],
-) -> (Vec<RecipeLink>, Vec<ArticleFetchFailure>) {
+    candidates: &[ArticleCrawlCandidate],
+) -> (Vec<ArticleCrawlCandidate>, Vec<ArticleFetchFailure>) {
     let original_urls = candidates
         .iter()
         .map(|candidate| candidate.url.as_str())
@@ -6228,7 +6314,7 @@ fn is_bounded_listing_scope(scope: ElementRef<'_>) -> bool {
         <= MAX_LISTING_CARD_DESCENDANTS
 }
 
-fn article_candidate_priority(link: &RecipeLink) -> (bool, bool, bool) {
+fn article_candidate_priority(link: &ArticleCrawlCandidate) -> (bool, bool, bool) {
     let segments = semantic_path_segments(&link.url);
     let has_strong_detail_root = segments.iter().any(|segment| {
         matches!(
@@ -6359,9 +6445,11 @@ fn implicit_recipe_host_is_safe(url: &Url, normalized_host: &str) -> bool {
         .any(|token| EDITORIAL_PATH_TOKENS.contains(&token.to_ascii_lowercase().as_str()))
 }
 
-fn group_article_candidates_by_host(candidates: &[RecipeLink]) -> Vec<Vec<(usize, RecipeLink)>> {
+fn group_article_candidates_by_host(
+    candidates: &[ArticleCrawlCandidate],
+) -> Vec<Vec<(usize, ArticleCrawlCandidate)>> {
     let mut group_indexes = HashMap::new();
-    let mut groups = Vec::<Vec<(usize, RecipeLink)>>::new();
+    let mut groups = Vec::<Vec<(usize, ArticleCrawlCandidate)>>::new();
     for (candidate_index, candidate) in candidates.iter().enumerate() {
         let host_key = candidate
             .url
@@ -9081,13 +9169,13 @@ mod tests {
         );
 
         let candidates = [
-            RecipeLink {
+            ArticleCrawlCandidate {
                 url: canonical.clone(),
                 title_hint: Some("Company’s update".to_owned()),
                 published_at_hint: None,
                 document_url: None,
             },
-            RecipeLink {
+            ArticleCrawlCandidate {
                 url: alias.clone(),
                 title_hint: Some("Company’s update".to_owned()),
                 published_at_hint: None,
@@ -10988,7 +11076,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn article_crawler_uses_configured_same_host_concurrency() {
+    async fn article_crawler_enforces_same_host_concurrency_across_calls() {
         use std::sync::{
             Arc,
             atomic::{AtomicUsize, Ordering},
@@ -11021,6 +11109,7 @@ mod tests {
             .route("/news/one", get(article))
             .route("/news/two", get(article))
             .route("/news/three", get(article))
+            .route("/news/four", get(article))
             .with_state(state.clone());
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
@@ -11032,19 +11121,24 @@ mod tests {
         let crawler = HtmlArticleCrawler::new(HtmlArticleCrawlerConfig {
             allow_private_networks: true,
             max_concurrency: 6,
-            max_per_host_concurrency: 3,
+            max_per_host_concurrency: 2,
             min_content_chars: 20,
             ..HtmlArticleCrawlerConfig::default()
         })
         .expect("crawler");
-        let urls = ["one", "two", "three"]
+        let urls = ["one", "two", "three", "four"]
             .into_iter()
             .map(|slug| Url::parse(&format!("http://{address}/news/{slug}")).expect("article URL"))
             .collect::<Vec<_>>();
-        let report = crawler.crawl_urls(&urls).await.expect("crawl report");
+        let (first, second) = tokio::join!(
+            crawler.crawl_urls(&urls[..2]),
+            crawler.crawl_urls(&urls[2..]),
+        );
+        let first = first.expect("first crawl report");
+        let second = second.expect("second crawl report");
 
-        assert_eq!(report.items.len(), 3);
-        assert_eq!(state.maximum.load(Ordering::SeqCst), 3);
+        assert_eq!(first.items.len() + second.items.len(), 4);
+        assert_eq!(state.maximum.load(Ordering::SeqCst), 2);
         task.abort();
     }
 

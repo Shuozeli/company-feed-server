@@ -297,6 +297,122 @@ impl Database {
     ) -> Result<Vec<ExportableFeedItem>, DatabaseError> {
         sqlx::query_as::<_, ExportableFeedItemRow>(
             r#"
+            WITH target AS (
+                SELECT metadata
+                FROM export_targets
+                WHERE id = $1
+            ),
+            canonical_ranked_items AS (
+                SELECT
+                    item.id,
+                    item.company_id,
+                    item.canonical_url,
+                    item.title,
+                    item.published_at,
+                    item.fetched_at,
+                    item.source_kind,
+                    item.created_at,
+                    length(btrim(item.body_text)) AS content_chars,
+                    CASE
+                        WHEN crawl_state.status = 'succeeded' THEN 0
+                        WHEN length(btrim(item.body_text)) >= 200 THEN 1
+                        ELSE 2
+                    END AS content_rank,
+                    row_number() OVER (
+                        PARTITION BY
+                            item.company_id,
+                            public_url_identity_key(item.canonical_url)
+                        ORDER BY
+                            CASE
+                                WHEN crawl_state.status = 'succeeded' THEN 0
+                                WHEN length(btrim(item.body_text)) >= 200 THEN 1
+                                ELSE 2
+                            END,
+                            length(btrim(item.body_text)) DESC,
+                            CASE source.kind
+                                WHEN 'rss' THEN 0
+                                WHEN 'atom' THEN 1
+                                WHEN 'html' THEN 2
+                                ELSE 3
+                            END,
+                            item.fetched_at DESC,
+                            item.id
+                    ) AS canonical_duplicate_rank
+                FROM feed_items AS item
+                JOIN sources AS source ON source.id = item.source_id
+                LEFT JOIN content_crawl_state AS crawl_state
+                    ON crawl_state.feed_item_id = item.id
+                CROSS JOIN target
+                WHERE
+                    NOT item.is_private
+                    AND (
+                        item.published_at IS NULL
+                        OR item.published_at <= CURRENT_TIMESTAMP
+                    )
+                    AND source.status = 'approved'
+                    AND (
+                        source.public_export_allowed
+                        OR target.metadata ->> 'publication_scope'
+                            = 'approved_public'
+                    )
+                    AND source.kind IN ('rss', 'atom', 'html', 'browser')
+                    AND (
+                        source.kind IN ('rss', 'atom')
+                        OR EXISTS (
+                            SELECT 1
+                            FROM company_news_recipes AS active_recipe
+                            LEFT JOIN company_news_recipe_state AS active_recipe_state
+                                ON active_recipe_state.recipe_id = active_recipe.id
+                            WHERE active_recipe.source_id = source.id
+                              AND active_recipe.status = 'active'
+                              AND NOT COALESCE(
+                                  active_recipe_state.rebuild_required,
+                                  false
+                              )
+                        )
+                    )
+            ),
+            ranked_items AS (
+                SELECT
+                    canonical_item.*,
+                    row_number() OVER (
+                        PARTITION BY
+                            canonical_item.company_id,
+                            CASE
+                                WHEN canonical_item.published_at IS NULL
+                                THEN
+                                    'url:'
+                                    || public_url_identity_key(
+                                        canonical_item.canonical_url
+                                    )
+                                ELSE
+                                    'dated-title:'
+                                    || canonical_item.published_at::date::text
+                                    || ':'
+                                    || lower(
+                                        regexp_replace(
+                                            btrim(canonical_item.title),
+                                            '\s+',
+                                            ' ',
+                                            'g'
+                                        )
+                                    )
+                            END
+                        ORDER BY
+                            canonical_item.content_rank,
+                            canonical_item.content_chars DESC,
+                            CASE canonical_item.source_kind
+                                WHEN 'rss' THEN 0
+                                WHEN 'atom' THEN 1
+                                WHEN 'html' THEN 2
+                                ELSE 3
+                            END,
+                            canonical_item.fetched_at DESC,
+                            canonical_item.id
+                    ) AS duplicate_rank
+                FROM canonical_ranked_items AS canonical_item
+                WHERE canonical_item.canonical_duplicate_rank = 1
+            )
             SELECT
                 item.id,
                 item.company_id,
@@ -321,33 +437,14 @@ impl Database {
                 source.source_id AS source_key,
                 exported.exported_path AS previous_exported_path,
                 exported.exported_content_hash AS previous_content_hash
-            FROM feed_items AS item
+            FROM ranked_items AS selected
+            JOIN feed_items AS item ON item.id = selected.id
             JOIN companies AS company ON company.id = item.company_id
             JOIN sources AS source ON source.id = item.source_id
             LEFT JOIN exported_items AS exported
                 ON exported.target_id = $1
                 AND exported.feed_item_id = item.id
-            WHERE
-                NOT item.is_private
-                AND (
-                    item.published_at IS NULL
-                    OR item.published_at <= CURRENT_TIMESTAMP
-                )
-                AND source.status = 'approved'
-                AND source.public_export_allowed
-                AND source.kind IN ('rss', 'atom', 'html', 'browser')
-                AND (
-                    source.kind IN ('rss', 'atom')
-                    OR EXISTS (
-                        SELECT 1
-                        FROM company_news_recipes AS active_recipe
-                        LEFT JOIN company_news_recipe_state AS active_recipe_state
-                            ON active_recipe_state.recipe_id = active_recipe.id
-                        WHERE active_recipe.source_id = source.id
-                          AND active_recipe.status = 'active'
-                          AND NOT COALESCE(active_recipe_state.rebuild_required, false)
-                    )
-                )
+            WHERE selected.duplicate_rank = 1
             ORDER BY
                 item.published_at ASC NULLS LAST,
                 item.fetched_at ASC,

@@ -61,7 +61,7 @@ async fn runner_completes_successful_jobs_and_schedules_retryable_failures() {
     let database = Database::connect(&database_url, 5)
         .await
         .expect("connect to test Postgres");
-    database.migrate().await.expect("run migrations");
+    database.ensure_schema().await.expect("ensure schema");
     let config = JobRunnerConfig {
         lease_duration: Duration::from_secs(30),
         heartbeat_interval: Duration::from_secs(10),
