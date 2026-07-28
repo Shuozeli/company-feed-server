@@ -162,3 +162,4 @@ SELECT
         'migration', '0092_supersede_temporal_and_persona_recipes'
     )
 FROM temporal_and_persona_recipes AS invalid;
+

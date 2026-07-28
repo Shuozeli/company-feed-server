@@ -357,3 +357,4 @@ SELECT
 FROM
     recipe_quality_revalidation_targets AS target
     CROSS JOIN recipe_quality_repair_wave AS wave;
+

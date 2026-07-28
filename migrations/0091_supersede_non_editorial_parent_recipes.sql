@@ -226,3 +226,4 @@ SELECT
         'migration', '0091_supersede_non_editorial_parent_recipes'
     )
 FROM non_editorial_parent_recipes AS invalid;
+
