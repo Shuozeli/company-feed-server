@@ -3,7 +3,9 @@
 use std::{collections::HashSet, time::Duration};
 
 use chrono::{Duration as ChronoDuration, Utc};
-use feed_core::{JobSpec, JobType, NormalizedFeedItem, SourceKind};
+use feed_core::{
+    JobSpec, JobType, NormalizedFeedItem, ProcessedCrawlItem, RawCrawlItem, SourceKind,
+};
 use feed_db::{ContentCrawlFailure, ContentCrawlSuccess, Database};
 use serde_json::json;
 use tokio::sync::Mutex;
@@ -152,6 +154,112 @@ async fn content_crawl_state_tracks_success_refresh_and_retry() {
     assert_eq!(state_status, "succeeded");
     assert_eq!(content_chars as usize, stored_body.chars().count());
     assert_eq!(extraction_version, "generic-public-article.v1");
+
+    let source = database
+        .get_source(source_id)
+        .await
+        .expect("load fixture source")
+        .expect("fixture source exists");
+    let mut source_job = JobSpec::new(
+        JobType::CrawlSource,
+        format!("content-crawl-test:{suffix}:source-refresh"),
+        Utc::now(),
+    );
+    source_job.company_id = Some(company_id);
+    source_job.source_id = Some(source_id);
+    let source_job = database
+        .enqueue_job(&source_job)
+        .await
+        .expect("enqueue source refresh fixture");
+    let source_run = database
+        .begin_crawl_run(source_id, source_job.id)
+        .await
+        .expect("begin source refresh");
+    let feed_refresh_at = completed_at + ChronoDuration::minutes(1);
+    database
+        .complete_crawl_run(
+            source_run,
+            &source,
+            feed_refresh_at,
+            &[ProcessedCrawlItem {
+                raw: RawCrawlItem {
+                    source_item_key: article_url.as_str().to_owned(),
+                    external_id: Some(article_url.as_str().to_owned()),
+                    url: article_url.clone(),
+                    canonical_url: Some(article_url.clone()),
+                    title: Some("Updated feed title".to_owned()),
+                    summary_html: Some("<p>Updated feed excerpt</p>".to_owned()),
+                    body_html: Some("<p>Updated feed excerpt</p>".to_owned()),
+                    published_at: Some(observed_at),
+                    payload: json!({"contract": "feed-refresh-raw.v1"}),
+                },
+                normalized: Ok(NormalizedFeedItem {
+                    external_id: article_url.as_str().to_owned(),
+                    url: article_url.clone(),
+                    canonical_url: article_url.clone(),
+                    title: "Updated feed title".to_owned(),
+                    summary: "Updated feed excerpt".to_owned(),
+                    body_text: "Updated feed excerpt".to_owned(),
+                    body_html: "<p>Updated feed excerpt</p>".to_owned(),
+                    body_markdown: "Updated feed excerpt".to_owned(),
+                    published_at: Some(observed_at),
+                    fetched_at: feed_refresh_at,
+                    content_hash: format!("sha256:feed-refresh:{suffix}"),
+                    source_kind: SourceKind::Rss,
+                    raw: json!({"contract": "feed-refresh-raw.v1"}),
+                    normalized: json!({"contract": "feed-refresh-normalized.v1"}),
+                    content_processing: json!({"contract": "feed-refresh.v1"}),
+                }),
+            }],
+            json!({"fixture": "source-refresh"}),
+        )
+        .await
+        .expect("complete source refresh");
+
+    let (
+        refreshed_title,
+        refreshed_summary,
+        refreshed_body,
+        refreshed_at,
+        refreshed_hash,
+        processing_contract,
+        crawl_contract,
+    ): (
+        String,
+        String,
+        String,
+        chrono::DateTime<Utc>,
+        String,
+        String,
+        String,
+    ) = sqlx::query_as(
+        r#"
+            SELECT
+                title,
+                summary,
+                body_text,
+                fetched_at,
+                content_hash,
+                content_processing ->> 'contract',
+                content_processing -> 'content_crawl' ->> 'contract'
+            FROM feed_items
+            WHERE id = $1
+            "#,
+    )
+    .bind(feed_item_id)
+    .fetch_one(database.pool())
+    .await
+    .expect("read source-refreshed item");
+    assert_eq!(refreshed_title, "Updated feed title");
+    assert_eq!(refreshed_summary, "Independent summary");
+    assert_eq!(refreshed_body, body);
+    assert_eq!(
+        refreshed_at.timestamp_micros(),
+        completed_at.timestamp_micros()
+    );
+    assert_eq!(refreshed_hash, format!("sha256:article:{suffix}"));
+    assert_eq!(processing_contract, "feed-refresh.v1");
+    assert_eq!(crawl_contract, "article-content-crawl.v1");
 
     let not_due_job = content_job(&database, company_id, &suffix, "not-due").await;
     let not_due = database
