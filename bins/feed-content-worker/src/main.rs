@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 use feed_api::{ApiState, router};
 use feed_core::{AppSettings, CompaniesConfig, ExportTargetsConfig};
 use feed_db::Database;
-use feed_jobs::{CrawlExportJobProducer, build_crawl_export_job_registry};
+use feed_jobs::{ContentCrawlJobProducer, build_content_crawl_job_registry};
 use feed_scheduler::{JobHandler, JobRunner, JobRunnerConfig};
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
@@ -19,7 +19,6 @@ async fn main() -> Result<()> {
         .context("load company seed configuration")?;
     let export_targets = ExportTargetsConfig::load(&settings.export_targets_config_path)
         .context("load export target configuration")?;
-
     let database = Database::connect(&settings.database_url, settings.database_max_connections)
         .await
         .context("connect to Postgres")?;
@@ -27,41 +26,42 @@ async fn main() -> Result<()> {
         .ensure_schema()
         .await
         .context("ensure database schema")?;
-    let sync = database
+    database
         .sync_seed_config(&companies, &export_targets)
         .await
         .context("synchronize seed configuration")?;
-    info!(
-        companies = sync.companies,
-        export_targets = sync.export_targets,
-        "seed configuration synchronized"
-    );
 
     let handler = Arc::new(
-        build_crawl_export_job_registry(database.clone(), &settings)
-            .context("build crawl/export job handlers")?,
+        build_content_crawl_job_registry(database.clone(), &settings)
+            .context("build article content crawl handler")?,
     );
     let supported_job_types = handler.supported_job_types().to_vec();
-
     let shutdown = CancellationToken::new();
-    let runner_task = if settings.run_jobs {
-        let runner = JobRunner::new(
+    let jobs_enabled = settings.content_crawl_enabled && settings.content_crawl_run_jobs;
+    let mut runner_tasks = Vec::new();
+    if jobs_enabled {
+        for runner_index in 0..settings.content_crawl_job_concurrency {
+            let runner = JobRunner::new(
+                database.clone(),
+                format!("{}-content-{runner_index}", settings.worker_id),
+                handler.clone(),
+                JobRunnerConfig::from_settings(&settings),
+            )
+            .context("configure article content crawl runner")?;
+            let runner_shutdown = shutdown.clone();
+            runner_tasks.push(tokio::spawn(async move {
+                runner.run_until_cancelled(runner_shutdown).await
+            }));
+        }
+    }
+    let producer_task = if jobs_enabled {
+        let producer = ContentCrawlJobProducer::new(
             database.clone(),
-            settings.worker_id.clone(),
-            handler,
-            JobRunnerConfig::from_settings(&settings),
+            settings.job_poll_interval,
+            settings.content_crawl_refresh,
+            settings.content_crawl_job_concurrency,
         )
-        .context("configure job runner")?;
-        let runner_shutdown = shutdown.clone();
-        Some(tokio::spawn(async move {
-            runner.run_until_cancelled(runner_shutdown).await
-        }))
-    } else {
-        None
-    };
-    let producer_task = if settings.run_jobs && settings.schedule_jobs {
-        let producer =
-            CrawlExportJobProducer::new(database.clone(), settings.scheduler_scan_interval);
+        .context("configure article content crawl producer")?;
         let producer_shutdown = shutdown.clone();
         Some(tokio::spawn(async move {
             producer.run_until_cancelled(producer_shutdown).await;
@@ -72,26 +72,39 @@ async fn main() -> Result<()> {
 
     let state = ApiState::new(
         database.clone(),
-        "feed-worker",
-        settings.run_jobs,
+        "feed-content-worker",
+        jobs_enabled,
         supported_job_types,
     );
-    let listener = tokio::net::TcpListener::bind(settings.worker_bind_addr)
+    let listener = tokio::net::TcpListener::bind(settings.content_crawl_worker_bind_addr)
         .await
-        .with_context(|| format!("bind worker health server to {}", settings.worker_bind_addr))?;
-    info!(address = %settings.worker_bind_addr, "worker health server listening");
+        .with_context(|| {
+            format!(
+                "bind article content crawl health server to {}",
+                settings.content_crawl_worker_bind_addr
+            )
+        })?;
+    info!(
+        address = %settings.content_crawl_worker_bind_addr,
+        jobs_enabled,
+        job_concurrency = settings.content_crawl_job_concurrency,
+        batch_size = settings.content_crawl_batch_size,
+        max_concurrency = settings.content_crawl_max_concurrency,
+        max_per_host_concurrency = settings.content_crawl_max_per_host_concurrency,
+        "article content crawl worker listening"
+    );
 
     axum::serve(listener, router(state))
         .with_graceful_shutdown(shutdown_signal(shutdown.clone()))
         .await
-        .context("serve worker health API")?;
+        .context("serve article content crawl health API")?;
 
     shutdown.cancel();
-    if let Some(task) = runner_task {
-        task.await.context("job runner task panicked")??;
+    for task in runner_tasks {
+        task.await.context("content crawl runner task panicked")??;
     }
     if let Some(task) = producer_task {
-        task.await.context("job producer task panicked")?;
+        task.await.context("content crawl producer task panicked")?;
     }
     database.close().await;
     Ok(())
@@ -99,7 +112,7 @@ async fn main() -> Result<()> {
 
 fn init_tracing() {
     let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("info,feed_worker=debug"));
+        .unwrap_or_else(|_| EnvFilter::new("info,feed_content_worker=debug"));
     tracing_subscriber::fmt().with_env_filter(filter).init();
 }
 
@@ -117,7 +130,7 @@ async fn shutdown_signal(shutdown: CancellationToken) {
                 signal.recv().await;
             }
             Err(error) => {
-                warn!(%error, "failed to install termination signal handler");
+                warn!(%error, "failed to install SIGTERM handler");
             }
         }
     };

@@ -30,13 +30,14 @@ It is independent of search providers and Postgres.
 
 The `sqlx` Postgres access layer:
 
-- migrations and seed synchronization;
+- declarative-schema verification and seed synchronization;
 - atomic company-universe import and activation;
 - durable job enqueue, claim, heartbeat, retry, failure, and recovery;
 - discovery candidate persistence;
 - validation-run and decision audit;
 - atomic activation, rejection, and accepted-source disable;
 - raw crawl and normalized item transactions;
+- independent article-content attempt, retry, freshness, and coverage state;
 - source health and export state;
 - per-origin company-news source creation, recipe version/state/run persistence,
   coverage summaries, and manual build audit;
@@ -135,14 +136,16 @@ Lease-fenced job execution:
 - cancellation reconciliation for in-flight discovery, validation, and
   company-news import runs.
 
-The runner handles one job at a time per process. Deploy additional processes
-for concurrency; Postgres claims prevent duplicate ownership.
+Each `JobRunner` handles one job at a time. Most runtimes host one runner;
+`feed-content-worker` may host a bounded configured number so unrelated slow
+origins do not block the corpus. Postgres claims prevent duplicate ownership.
 
 Recurring producers are component-specific:
 
 - `DiscoveryJobProducer`;
 - `ValidationJobProducer`;
-- `CrawlExportJobProducer`.
+- `CrawlExportJobProducer`;
+- `ContentCrawlJobProducer`.
 
 Each producer can be disabled independently with `SCHEDULE_JOBS=false`.
 There is deliberately no automatic company-news recipe-build producer.
@@ -155,6 +158,7 @@ Application job handlers and producer assembly:
 - `CandidateValidationJobHandler`;
 - `CrawlJobHandler`;
 - `ExportJobHandler`;
+- `ContentCrawlJobHandler`;
 - `CompanyNewsExtractionJobHandler`;
 - separate registry builders for discovery, validation, manual news import,
   and crawl/export.
@@ -196,7 +200,8 @@ exposed directly to an untrusted network.
 
 ### `feed-server`
 
-- applies migrations;
+- initializes a blank database from `schema/postgres.sql` and rejects drift on
+  an existing database;
 - synchronizes seed config;
 - serves REST, readiness, and `/review`;
 - claims no background job type.
@@ -230,6 +235,17 @@ exposed directly to an untrusted network.
   origin, and preserves disabled-source state;
 - exposes health/readiness on its own port.
 
+### `feed-content-worker`
+
+- registers only `crawl_content`;
+- consumes already-discovered public article URLs in bounded batches;
+- independently fetches and sanitizes article pages with global and per-host
+  concurrency limits;
+- records every success, retryable failure, permanent failure, freshness
+  deadline, and extraction version;
+- exposes health/readiness and the shared read-only coverage API on its own
+  port.
+
 ### `feed-admin`
 
 - universe import and company activation;
@@ -254,5 +270,7 @@ Deterministic Git archive materialization:
 - per-target item hash/path state;
 - exporter-owned staging boundaries.
 
-An item is exportable only when its source is approved and
-`public_export_allowed=true`.
+The default export policy requires explicit source-level approval. A target
+may deliberately set `metadata.publication_scope=approved_public` to include
+all non-private items from approved, currently valid sources; this broader
+scope is visible in configuration rather than hidden in crawler behavior.

@@ -15,7 +15,7 @@ use feed_core::{
     ExportRun, ExportTarget, FeedItem, JobSpec, JobType, RecipeStatus, ReviewDashboard, Source,
     SourceCandidate, SourceHealth, SourceHealthSummary, SourceKind, SourceStatus,
 };
-use feed_db::{Database, DatabaseError, FeedItemSummaryFilter};
+use feed_db::{ContentCrawlCoverage, Database, DatabaseError, FeedItemSummaryFilter};
 use serde::{Deserialize, Serialize};
 use tower_http::{
     cors::{Any, CorsLayer},
@@ -111,6 +111,10 @@ pub fn router(state: ApiState) -> Router {
         .route(
             "/api/v1/company-news-recipe-coverage",
             get(get_company_news_recipe_coverage),
+        )
+        .route(
+            "/api/v1/content-crawl-coverage",
+            get(get_content_crawl_coverage),
         )
         .route("/api/v1/discovery-runs", get(list_discovery_runs))
         .route("/api/v1/export-targets", get(list_export_targets))
@@ -687,6 +691,33 @@ async fn get_company_news_recipe_coverage(
 ) -> Result<Json<CompanyNewsRecipeCoverage>, ApiError> {
     Ok(Json(
         state.database.get_company_news_recipe_coverage().await?,
+    ))
+}
+
+#[derive(Debug, Deserialize)]
+struct ContentCrawlCoverageQuery {
+    #[serde(default = "default_content_crawl_min_chars")]
+    min_content_chars: i32,
+}
+
+fn default_content_crawl_min_chars() -> i32 {
+    200
+}
+
+async fn get_content_crawl_coverage(
+    State(state): State<ApiState>,
+    Query(query): Query<ContentCrawlCoverageQuery>,
+) -> Result<Json<ContentCrawlCoverage>, ApiError> {
+    if query.min_content_chars <= 0 {
+        return Err(ApiError::BadRequest(
+            "min_content_chars must be positive".to_owned(),
+        ));
+    }
+    Ok(Json(
+        state
+            .database
+            .content_crawl_coverage(query.min_content_chars)
+            .await?,
     ))
 }
 

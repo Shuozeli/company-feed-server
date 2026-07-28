@@ -32,6 +32,8 @@ profiles, bypass paywalls, or require private provider code.
 - bounded batch validation, activation, rejection, and accepted-source disable
 - scheduled RSS/Atom and validated HTML-recipe crawling, raw replay records,
   and normalized articles
+- a separate, self-throttled article-content crawler with durable attempts,
+  retries, freshness refresh, and coverage reporting
 - explicit named-company and resumable all-company recipe construction through
   a URL-only private-adapter boundary
 - versioned recipes with crawl/content freshness, correctness gates, structure
@@ -41,6 +43,8 @@ profiles, bypass paywalls, or require private provider code.
   health, decisions, and execution history
 - deterministic Markdown, JSON, and JSONL Git archives
 - independently scalable API, discovery, validation, and crawl/export runtimes
+- a single declarative PostgreSQL schema reconciled on demand with generated
+  schema diffs
 - an independently scalable manual import runtime that claims no feed jobs
 - lease-fenced Postgres jobs with retry, heartbeat, recovery, and queue bounds
 
@@ -71,6 +75,11 @@ approved source             automatic rejection
       v
 feed-worker (crawl + normalize + export)
       |
+      +--> discovered article URLs / feed payloads
+      |
+      v
+feed-content-worker (independent article-page fetch + hydration)
+      |
       +--> REST API
       +--> Git archive
 
@@ -93,6 +102,7 @@ Each runtime claims only its own durable job types:
 | `feed-validation-worker` | `validate_candidate` only | 8083 |
 | `feed-worker` | `crawl_source` and `export_target` only | 8081 |
 | `feed-news-extraction-worker` | `extract_company_news` only | 8084 |
+| `feed-content-worker` | `crawl_content` only | 8085 |
 | `feed-admin` | bounded operator commands that use the same DB contracts | n/a |
 
 Discovery is therefore not embedded in the API server and cannot consume API
@@ -122,6 +132,20 @@ Start validation plus crawl/export processing:
 ```bash
 docker compose --profile validation --profile workers up --build -d
 ```
+
+Start independent article-page hydration and inspect its durable coverage:
+
+```bash
+docker compose --profile content-crawl up --build -d content-worker
+cargo run -p feed-admin -- content-crawl status
+```
+
+Discovery/source crawling and content crawling are deliberately separate.
+Source crawling finds article identities and keeps feeds current; the content
+worker independently fetches every eligible public article page regardless of
+source type or pre-existing body, replaces source observations with sanitized
+HTML/Markdown/text on success, records failures, and refreshes successful
+content after the configured interval.
 
 Start discovery only when its inputs and optional adapter are configured:
 

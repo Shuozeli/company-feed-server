@@ -7,6 +7,7 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use serde_json::Value;
 use url::Url;
 
 use crate::{
@@ -42,6 +43,15 @@ const DEFAULT_NEWS_EXTRACTION_MAX_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
 const DEFAULT_NEWS_EXTRACTION_MAX_CONCURRENCY: usize = 24;
 const DEFAULT_NEWS_EXTRACTION_MAX_PER_HOST_CONCURRENCY: usize = 8;
 const DEFAULT_NEWS_EXTRACTION_MIN_CONTENT_CHARS: usize = 200;
+const DEFAULT_CONTENT_CRAWL_BATCH_SIZE: usize = 100;
+const DEFAULT_CONTENT_CRAWL_JOB_CONCURRENCY: u32 = 1;
+const DEFAULT_CONTENT_CRAWL_FETCH_TIMEOUT_SECONDS: u64 = 20;
+const DEFAULT_CONTENT_CRAWL_MAX_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
+const DEFAULT_CONTENT_CRAWL_MAX_CONCURRENCY: usize = 24;
+const DEFAULT_CONTENT_CRAWL_MAX_PER_HOST_CONCURRENCY: usize = 2;
+const DEFAULT_CONTENT_CRAWL_MIN_CONTENT_CHARS: usize = 200;
+const DEFAULT_CONTENT_CRAWL_REFRESH_SECONDS: u64 = 30 * 24 * 60 * 60;
+const DEFAULT_CONTENT_CRAWL_MAX_ATTEMPTS: i32 = 5;
 const DEFAULT_CRAWLER_REQUEST_TIMEOUT_SECONDS: u64 = 20;
 const DEFAULT_CRAWLER_MAX_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
 const DEFAULT_CRAWLER_MAX_ITEMS: usize = 500;
@@ -181,6 +191,12 @@ impl ExportTargetsConfig {
                     target.target_id
                 )));
             }
+            if !target.metadata.is_object() {
+                return Err(ConfigError::Validation(format!(
+                    "export target {} metadata must be an object",
+                    target.target_id
+                )));
+            }
         }
 
         Ok(config)
@@ -203,6 +219,8 @@ pub struct ExportTargetSeed {
     pub enabled: bool,
     #[serde(default)]
     pub push_enabled: bool,
+    #[serde(default = "default_json_object")]
+    pub metadata: Value,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -214,12 +232,15 @@ pub struct AppSettings {
     pub discovery_worker_bind_addr: SocketAddr,
     pub validation_worker_bind_addr: SocketAddr,
     pub news_extraction_worker_bind_addr: SocketAddr,
+    pub content_crawl_worker_bind_addr: SocketAddr,
     pub public_fetch_user_agent: String,
     pub companies_config_path: PathBuf,
     pub export_targets_config_path: PathBuf,
     pub run_jobs: bool,
     pub schedule_jobs: bool,
     pub news_extraction_run_jobs: bool,
+    pub content_crawl_run_jobs: bool,
+    pub content_crawl_job_concurrency: u32,
     pub news_extraction_job_concurrency: u32,
     pub worker_id: String,
     pub job_lease: Duration,
@@ -261,6 +282,15 @@ pub struct AppSettings {
     pub news_extraction_min_content_chars: usize,
     pub news_extraction_allow_private_networks: bool,
     pub news_extraction_public_export: bool,
+    pub content_crawl_enabled: bool,
+    pub content_crawl_batch_size: usize,
+    pub content_crawl_fetch_timeout: Duration,
+    pub content_crawl_max_response_bytes: usize,
+    pub content_crawl_max_concurrency: usize,
+    pub content_crawl_max_per_host_concurrency: usize,
+    pub content_crawl_min_content_chars: usize,
+    pub content_crawl_refresh: Duration,
+    pub content_crawl_max_attempts: i32,
     pub crawler_request_timeout: Duration,
     pub crawler_max_response_bytes: usize,
     pub crawler_max_items: usize,
@@ -296,6 +326,10 @@ impl AppSettings {
             "NEWS_EXTRACTION_WORKER_BIND_ADDR",
             SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8084),
         )?;
+        let content_crawl_worker_bind_addr = parse_env(
+            "CONTENT_CRAWL_WORKER_BIND_ADDR",
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8085),
+        )?;
         let public_fetch_user_agent = env::var("PUBLIC_FETCH_USER_AGENT")
             .ok()
             .map(|value| value.trim().to_owned())
@@ -304,6 +338,11 @@ impl AppSettings {
         let run_jobs = parse_env("RUN_JOBS", true)?;
         let schedule_jobs = parse_env("SCHEDULE_JOBS", true)?;
         let news_extraction_run_jobs = parse_env("NEWS_EXTRACTION_RUN_JOBS", run_jobs)?;
+        let content_crawl_run_jobs = parse_env("CONTENT_CRAWL_RUN_JOBS", run_jobs)?;
+        let content_crawl_job_concurrency = parse_env(
+            "CONTENT_CRAWL_JOB_CONCURRENCY",
+            DEFAULT_CONTENT_CRAWL_JOB_CONCURRENCY,
+        )?;
         let news_extraction_job_concurrency = parse_env(
             "NEWS_EXTRACTION_JOB_CONCURRENCY",
             DEFAULT_NEWS_EXTRACTION_JOB_CONCURRENCY,
@@ -525,6 +564,62 @@ impl AppSettings {
                     .to_owned(),
             ));
         }
+        let content_crawl_enabled = parse_env("CONTENT_CRAWL_ENABLED", true)?;
+        let content_crawl_batch_size =
+            parse_env("CONTENT_CRAWL_BATCH_SIZE", DEFAULT_CONTENT_CRAWL_BATCH_SIZE)?;
+        let content_crawl_fetch_timeout = Duration::from_secs(parse_env(
+            "CONTENT_CRAWL_FETCH_TIMEOUT_SECONDS",
+            DEFAULT_CONTENT_CRAWL_FETCH_TIMEOUT_SECONDS,
+        )?);
+        let content_crawl_max_response_bytes = parse_env(
+            "CONTENT_CRAWL_MAX_RESPONSE_BYTES",
+            DEFAULT_CONTENT_CRAWL_MAX_RESPONSE_BYTES,
+        )?;
+        let content_crawl_max_concurrency = parse_env(
+            "CONTENT_CRAWL_MAX_CONCURRENCY",
+            DEFAULT_CONTENT_CRAWL_MAX_CONCURRENCY,
+        )?;
+        let content_crawl_max_per_host_concurrency = parse_env(
+            "CONTENT_CRAWL_MAX_PER_HOST_CONCURRENCY",
+            DEFAULT_CONTENT_CRAWL_MAX_PER_HOST_CONCURRENCY,
+        )?;
+        let content_crawl_min_content_chars = parse_env(
+            "CONTENT_CRAWL_MIN_CONTENT_CHARS",
+            DEFAULT_CONTENT_CRAWL_MIN_CONTENT_CHARS,
+        )?;
+        let content_crawl_refresh = Duration::from_secs(parse_env(
+            "CONTENT_CRAWL_REFRESH_SECONDS",
+            DEFAULT_CONTENT_CRAWL_REFRESH_SECONDS,
+        )?);
+        let content_crawl_max_attempts = parse_env(
+            "CONTENT_CRAWL_MAX_ATTEMPTS",
+            DEFAULT_CONTENT_CRAWL_MAX_ATTEMPTS,
+        )?;
+        if content_crawl_job_concurrency == 0
+            || content_crawl_batch_size == 0
+            || content_crawl_fetch_timeout.is_zero()
+            || content_crawl_max_response_bytes == 0
+            || content_crawl_max_concurrency == 0
+            || content_crawl_max_per_host_concurrency == 0
+            || content_crawl_min_content_chars == 0
+            || content_crawl_refresh.is_zero()
+            || content_crawl_max_attempts <= 0
+        {
+            return Err(ConfigError::Validation(
+                "content crawl timeouts and limits must be positive".to_owned(),
+            ));
+        }
+        if content_crawl_max_per_host_concurrency > content_crawl_max_concurrency {
+            return Err(ConfigError::Validation(
+                "CONTENT_CRAWL_MAX_PER_HOST_CONCURRENCY must not exceed CONTENT_CRAWL_MAX_CONCURRENCY"
+                    .to_owned(),
+            ));
+        }
+        if content_crawl_job_concurrency > 32 {
+            return Err(ConfigError::Validation(
+                "CONTENT_CRAWL_JOB_CONCURRENCY must not exceed 32".to_owned(),
+            ));
+        }
         let crawler_request_timeout = Duration::from_secs(parse_env(
             "CRAWLER_REQUEST_TIMEOUT_SECONDS",
             DEFAULT_CRAWLER_REQUEST_TIMEOUT_SECONDS,
@@ -551,6 +646,7 @@ impl AppSettings {
             discovery_worker_bind_addr,
             validation_worker_bind_addr,
             news_extraction_worker_bind_addr,
+            content_crawl_worker_bind_addr,
             public_fetch_user_agent,
             companies_config_path: env::var_os("COMPANIES_CONFIG")
                 .map(PathBuf::from)
@@ -561,6 +657,8 @@ impl AppSettings {
             run_jobs,
             schedule_jobs,
             news_extraction_run_jobs,
+            content_crawl_run_jobs,
+            content_crawl_job_concurrency,
             news_extraction_job_concurrency,
             worker_id,
             job_lease,
@@ -602,6 +700,15 @@ impl AppSettings {
             news_extraction_min_content_chars,
             news_extraction_allow_private_networks,
             news_extraction_public_export,
+            content_crawl_enabled,
+            content_crawl_batch_size,
+            content_crawl_fetch_timeout,
+            content_crawl_max_response_bytes,
+            content_crawl_max_concurrency,
+            content_crawl_max_per_host_concurrency,
+            content_crawl_min_content_chars,
+            content_crawl_refresh,
+            content_crawl_max_attempts,
             crawler_request_timeout,
             crawler_max_response_bytes,
             crawler_max_items,
@@ -744,6 +851,10 @@ const fn default_true() -> bool {
     true
 }
 
+fn default_json_object() -> Value {
+    Value::Object(Default::default())
+}
+
 fn is_company_key(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 160
@@ -800,6 +911,29 @@ targets:
         assert_eq!(target.cadence_seconds, 3_600);
         assert!(target.enabled);
         assert!(!target.push_enabled);
+        assert_eq!(target.metadata, default_json_object());
+    }
+
+    #[test]
+    fn export_metadata_accepts_publication_scope() {
+        let parsed: ExportTargetsConfig = serde_yaml::from_str(
+            r#"
+targets:
+  - target_id: archive
+    repo_url: git@example.com:org/archive.git
+    local_path: ./archive
+    format: markdown_json
+    layout: by_company_date
+    metadata:
+      publication_scope: approved_public
+"#,
+        )
+        .expect("valid config");
+
+        assert_eq!(
+            parsed.targets[0].metadata["publication_scope"],
+            "approved_public"
+        );
     }
 
     #[test]

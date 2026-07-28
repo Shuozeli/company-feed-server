@@ -18,7 +18,7 @@ async fn successful_recrawl_releases_only_named_listing_quarantine() {
     let database = Database::connect(&database_url, 5)
         .await
         .expect("connect to test Postgres");
-    database.migrate().await.expect("run migrations");
+    database.ensure_schema().await.expect("ensure schema");
 
     let suffix = Uuid::new_v4().simple().to_string();
     let company_id: Uuid = sqlx::query_scalar(
@@ -227,7 +227,7 @@ async fn canonical_owner_wins_when_legacy_external_ids_collapse() {
     let database = Database::connect(&database_url, 5)
         .await
         .expect("connect to test Postgres");
-    database.migrate().await.expect("run migrations");
+    database.ensure_schema().await.expect("ensure schema");
 
     let suffix = Uuid::new_v4().simple().to_string();
     let company_id: Uuid = sqlx::query_scalar(
@@ -396,7 +396,7 @@ async fn public_url_identity_survives_cms_canonical_host_drift() {
     let database = Database::connect(&database_url, 5)
         .await
         .expect("connect to test Postgres");
-    database.migrate().await.expect("run migrations");
+    database.ensure_schema().await.expect("ensure schema");
 
     let suffix = Uuid::new_v4().simple().to_string();
     let company_id: Uuid = sqlx::query_scalar(
@@ -535,7 +535,7 @@ async fn failed_source_attempt_waits_for_its_crawl_interval_before_rescheduling(
     let database = Database::connect(&database_url, 5)
         .await
         .expect("connect to test Postgres");
-    database.migrate().await.expect("run migrations");
+    database.ensure_schema().await.expect("ensure schema");
 
     let suffix = Uuid::new_v4().simple().to_string();
     let company_id: Uuid = sqlx::query_scalar(

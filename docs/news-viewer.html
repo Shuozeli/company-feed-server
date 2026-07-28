@@ -174,6 +174,23 @@
       </div>
     </section>
 
+    <section class="campaign" aria-live="polite">
+      <div class="campaign-head">
+        <h2>Independent article-content crawl</h2>
+        <span id="content-coverage-updated">Loading content coverage…</span>
+      </div>
+      <div class="metrics">
+        <div class="metric"><strong id="content-processed">—</strong><span>eligible article URLs processed</span></div>
+        <div class="metric"><strong id="content-succeeded">—</strong><span>independent page extractions succeeded</span></div>
+        <div class="metric"><strong id="content-substantive">—</strong><span>items with substantive normalized bodies</span></div>
+        <div class="metric"><strong id="content-any-body">—</strong><span>items with any normalized body</span></div>
+        <div class="metric"><strong id="content-running">—</strong><span>article pages being fetched now</span></div>
+        <div class="metric"><strong id="content-retrying">—</strong><span>retryable failures waiting</span></div>
+        <div class="metric"><strong id="content-permanent">—</strong><span>permanent page-fetch failures</span></div>
+        <div class="metric"><strong id="content-never">—</strong><span>article URLs not attempted yet</span></div>
+      </div>
+    </section>
+
     <form class="controls" id="filters">
       <input id="search" type="search" maxlength="200" placeholder="Search company, title, or summary">
       <select id="kind" aria-label="Source type">
@@ -237,6 +254,15 @@
       quarantinedRecipeItems: document.querySelector("#quarantined-recipe-items"),
       buildQueue: document.querySelector("#build-queue"),
       terminalFailures: document.querySelector("#terminal-failures"),
+      contentCoverageUpdated: document.querySelector("#content-coverage-updated"),
+      contentProcessed: document.querySelector("#content-processed"),
+      contentSucceeded: document.querySelector("#content-succeeded"),
+      contentSubstantive: document.querySelector("#content-substantive"),
+      contentAnyBody: document.querySelector("#content-any-body"),
+      contentRunning: document.querySelector("#content-running"),
+      contentRetrying: document.querySelector("#content-retrying"),
+      contentPermanent: document.querySelector("#content-permanent"),
+      contentNever: document.querySelector("#content-never"),
     };
     elements.apiHost.textContent = `API ${apiBase.hostname}:${apiBase.port}`;
 
@@ -318,6 +344,27 @@
       }
     }
 
+    async function loadContentCoverage() {
+      const endpoint = new URL("/api/v1/content-crawl-coverage", apiBase);
+      try {
+        const response = await fetch(endpoint, { cache: "no-store" });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const coverage = await response.json();
+        const processed = coverage.eligible_items - coverage.never_attempted;
+        elements.contentProcessed.textContent = `${processed.toLocaleString()} / ${coverage.eligible_items.toLocaleString()}`;
+        elements.contentSucceeded.textContent = coverage.succeeded.toLocaleString();
+        elements.contentSubstantive.textContent = coverage.with_substantive_body.toLocaleString();
+        elements.contentAnyBody.textContent = coverage.with_body.toLocaleString();
+        elements.contentRunning.textContent = coverage.running.toLocaleString();
+        elements.contentRetrying.textContent = coverage.failed.toLocaleString();
+        elements.contentPermanent.textContent = coverage.permanent_failure.toLocaleString();
+        elements.contentNever.textContent = coverage.never_attempted.toLocaleString();
+        elements.contentCoverageUpdated.textContent = `Content coverage updated ${new Date().toLocaleTimeString()}`;
+      } catch (error) {
+        elements.contentCoverageUpdated.textContent = `Content coverage unavailable: ${error.message}`;
+      }
+    }
+
     async function loadNews() {
       if (state.loading) return;
       state.loading = true;
@@ -371,9 +418,11 @@
     });
 
     loadCoverage();
+    loadContentCoverage();
     loadNews();
     window.setInterval(() => {
       loadCoverage();
+      loadContentCoverage();
       loadNews();
     }, 60_000);
   </script>

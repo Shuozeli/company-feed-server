@@ -653,6 +653,7 @@ impl Database {
                         (external_id = $2) DESC,
                         created_at
                     LIMIT 1
+                    FOR UPDATE
                     "#,
                     )
                     .bind(source.id)
@@ -667,6 +668,8 @@ impl Database {
                             source.id
                         ))
                     })?;
+                let preserve_hydrated_content =
+                    existing_content_processing.get("content_crawl").is_some();
                 let released_quarantine = existing_is_private
                     .then(|| releasable_quality_quarantine_reason(&existing_content_processing))
                     .flatten()
@@ -704,28 +707,55 @@ impl Database {
                             ELSE $5
                         END,
                         title = $6,
-                        summary = $7,
-                        body_text = $8,
-                        body_html = $9,
-                        body_markdown = $10,
+                        summary = CASE
+                            WHEN $19 THEN summary
+                            ELSE $7
+                        END,
+                        body_text = CASE
+                            WHEN $19 THEN body_text
+                            ELSE $8
+                        END,
+                        body_html = CASE
+                            WHEN $19 THEN body_html
+                            ELSE $9
+                        END,
+                        body_markdown = CASE
+                            WHEN $19 THEN body_markdown
+                            ELSE $10
+                        END,
                         published_at = $11,
-                        fetched_at = $12,
-                        content_hash = $13,
+                        fetched_at = CASE
+                            WHEN $19 THEN fetched_at
+                            ELSE $12
+                        END,
+                        content_hash = CASE
+                            WHEN $19 THEN content_hash
+                            ELSE $13
+                        END,
                         source_kind = $14,
                         raw = $15,
                         normalized = $16,
-                        content_processing = CASE
-                            WHEN
-                                is_private
-                                AND NOT $18
-                                AND content_processing ? 'quality_quarantine'
-                            THEN
-                                $17 || jsonb_build_object(
+                        content_processing =
+                            $17
+                            || CASE
+                                WHEN $19
+                                THEN jsonb_build_object(
+                                    'content_crawl',
+                                    content_processing -> 'content_crawl'
+                                )
+                                ELSE '{}'::jsonb
+                            END
+                            || CASE
+                                WHEN
+                                    is_private
+                                    AND NOT $18
+                                    AND content_processing ? 'quality_quarantine'
+                                THEN jsonb_build_object(
                                     'quality_quarantine',
                                     content_processing -> 'quality_quarantine'
                                 )
-                            ELSE $17
-                        END,
+                                ELSE '{}'::jsonb
+                            END,
                         is_private = CASE WHEN $18 THEN false ELSE is_private END
                     WHERE id = $1
                     "#,
@@ -748,6 +778,7 @@ impl Database {
                 .bind(&normalized.normalized)
                 .bind(&normalized.content_processing)
                 .bind(released_quarantine.is_some())
+                .bind(preserve_hydrated_content)
                 .execute(&mut *transaction)
                 .await?;
                 if let Some((policy, reason)) = released_quarantine {

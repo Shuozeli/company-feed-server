@@ -1,10 +1,16 @@
+FROM golang:1.26-bookworm AS schema-builder
+
+ARG PG_SCHEMA_DIFF_VERSION=v1.0.8
+RUN GOBIN=/out go install \
+      github.com/stripe/pg-schema-diff/cmd/pg-schema-diff@${PG_SCHEMA_DIFF_VERSION}
+
 FROM rust:1.88-bookworm AS builder
 
 WORKDIR /app
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
 COPY bins ./bins
-COPY migrations ./migrations
+COPY schema ./schema
 COPY docs/news-viewer.html ./docs/news-viewer.html
 RUN --mount=type=cache,id=company-feed-cargo-registry,target=/usr/local/cargo/registry \
     --mount=type=cache,id=company-feed-target,target=/app/target \
@@ -14,6 +20,7 @@ RUN --mount=type=cache,id=company-feed-cargo-registry,target=/usr/local/cargo/re
       -p feed-discovery-worker \
       -p feed-validation-worker \
       -p feed-news-extraction-worker \
+      -p feed-content-worker \
       -p feed-admin \
     && mkdir -p /app/out \
     && cp /app/target/release/feed-server /app/out/feed-server \
@@ -21,6 +28,7 @@ RUN --mount=type=cache,id=company-feed-cargo-registry,target=/usr/local/cargo/re
     && cp /app/target/release/feed-discovery-worker /app/out/feed-discovery-worker \
     && cp /app/target/release/feed-validation-worker /app/out/feed-validation-worker \
     && cp /app/target/release/feed-news-extraction-worker /app/out/feed-news-extraction-worker \
+    && cp /app/target/release/feed-content-worker /app/out/feed-content-worker \
     && cp /app/target/release/feed-admin /app/out/feed-admin
 
 FROM debian:bookworm-slim AS runtime
@@ -36,12 +44,15 @@ COPY --from=builder /app/out/feed-worker /usr/local/bin/feed-worker
 COPY --from=builder /app/out/feed-discovery-worker /usr/local/bin/feed-discovery-worker
 COPY --from=builder /app/out/feed-validation-worker /usr/local/bin/feed-validation-worker
 COPY --from=builder /app/out/feed-news-extraction-worker /usr/local/bin/feed-news-extraction-worker
+COPY --from=builder /app/out/feed-content-worker /usr/local/bin/feed-content-worker
 COPY --from=builder /app/out/feed-admin /usr/local/bin/feed-admin
+COPY --from=schema-builder /out/pg-schema-diff /usr/local/bin/pg-schema-diff
 COPY configs ./configs
+COPY schema ./schema
 
 RUN mkdir -p /app/exports \
     && chown -R company-feed:company-feed /app
 
 USER company-feed
-EXPOSE 8080 8081 8082 8083 8084
+EXPOSE 8080 8081 8082 8083 8084 8085
 ENTRYPOINT ["feed-server"]

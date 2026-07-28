@@ -22,7 +22,7 @@ async fn transient_news_retry_selection_uses_latest_attempt_and_feed_policy() {
     let database = Database::connect(&database_url, 5)
         .await
         .expect("connect to test Postgres");
-    database.migrate().await.expect("run migrations");
+    database.ensure_schema().await.expect("ensure schema");
 
     let suffix = Uuid::new_v4().simple().to_string();
     let retry_after = Utc::now() + ChronoDuration::days(1);
@@ -241,7 +241,7 @@ async fn unhealthy_approved_feeds_do_not_suppress_recipe_recovery() {
     let database = Database::connect(&database_url, 5)
         .await
         .expect("connect to test Postgres");
-    database.migrate().await.expect("run migrations");
+    database.ensure_schema().await.expect("ensure schema");
 
     let coverage_before = database
         .get_company_news_recipe_coverage()
@@ -391,7 +391,7 @@ async fn company_news_job_claims_are_database_serialized() {
     let database = Database::connect(&database_url, 5)
         .await
         .expect("connect to test Postgres");
-    database.migrate().await.expect("run migrations");
+    database.ensure_schema().await.expect("ensure schema");
 
     let suffix = Uuid::new_v4();
     let first = database
@@ -479,7 +479,7 @@ async fn company_news_job_claims_honor_configured_pipeline_width() {
     let database = Database::connect(&database_url, 5)
         .await
         .expect("connect to test Postgres");
-    database.migrate().await.expect("run migrations");
+    database.ensure_schema().await.expect("ensure schema");
 
     let suffix = Uuid::new_v4();
     let mut jobs = Vec::new();
@@ -580,7 +580,7 @@ async fn recipe_seeded_feed_validation_can_replace_html_but_stops_after_a_feed()
     let database = Database::connect(&database_url, 5)
         .await
         .expect("connect to test Postgres");
-    database.migrate().await.expect("run migrations");
+    database.ensure_schema().await.expect("ensure schema");
 
     let suffix = Uuid::new_v4().simple().to_string();
     let company_id: Uuid = sqlx::query_scalar(
@@ -790,7 +790,7 @@ async fn automatic_scope_reconsideration_never_reopens_operator_rejections() {
     let database = Database::connect(&database_url, 5)
         .await
         .expect("connect to test Postgres");
-    database.migrate().await.expect("run migrations");
+    database.ensure_schema().await.expect("ensure schema");
 
     let suffix = Uuid::new_v4().simple().to_string();
     let mut fixtures = Vec::new();
@@ -959,7 +959,7 @@ async fn job_lifecycle_is_idempotent_and_lease_fenced() {
     let database = Database::connect(&database_url, 5)
         .await
         .expect("connect to test Postgres");
-    database.migrate().await.expect("run migrations");
+    database.ensure_schema().await.expect("ensure schema");
 
     let key = format!("integration:{}", Uuid::new_v4());
     let mut spec = JobSpec::new(JobType::DiscoverCompany, &key, Utc::now());
@@ -1067,7 +1067,7 @@ async fn retried_crawl_attempts_close_abandoned_crawl_and_recipe_runs() {
     let database = Database::connect(&database_url, 5)
         .await
         .expect("connect to test Postgres");
-    database.migrate().await.expect("run migrations");
+    database.ensure_schema().await.expect("ensure schema");
 
     let suffix = Uuid::new_v4().simple().to_string();
     let company_id: Uuid = sqlx::query_scalar(
@@ -1204,7 +1204,7 @@ async fn expired_final_attempt_is_failed_instead_of_reclaimed() {
     let database = Database::connect(&database_url, 5)
         .await
         .expect("connect to test Postgres");
-    database.migrate().await.expect("run migrations");
+    database.ensure_schema().await.expect("ensure schema");
 
     let key = format!("integration-expired:{}", Uuid::new_v4());
     let mut spec = JobSpec::new(JobType::DiscoverCompany, &key, Utc::now());

@@ -804,19 +804,19 @@ sanitized body under different headlines are normalization failures for
 RSS/Atom sources too. Existing rows found by the same rules are reversibly
 quarantined, while a source confirmed to belong to a different company is
 disabled and retained privately for audit.
-Migration 0134 applies that contract to generic legal-notice/video hubs and
-records the confirmed Infina WordPress casino-SEO incident under
+The durable repair audit applies that contract to generic legal-notice/video
+hubs and records the confirmed Infina WordPress casino-SEO incident under
 `publication-topic-compromise.v1`. The two affected blog sources are disabled,
 their HTML recipe is stale, and all observed rows remain private for a later
 operator-confirmed recovery.
-Migration 0135 extends the reviewed incident repair to the compromised CEL-SCI,
-Cerus, Reitar, and Infina-root sources, and classifies Discourse `/discuss/`
-publications as non-editorial forum scope. RADCOM's exact observed compromise
-window is quarantined without disabling its recovered feed; its ten clean
-company articles are retained and the source is immediately revalidated.
-Migration 0136 quarantines the one residual Discourse thread formerly retained
-under a stale blog source and records RADCOM as recovered only after that
-dedicated revalidation crawl completes successfully.
+The same reviewed repair policy covers the compromised CEL-SCI, Cerus, Reitar,
+and Infina-root sources, and classifies Discourse `/discuss/` publications as
+non-editorial forum scope. RADCOM's exact observed compromise window is
+quarantined without disabling its recovered feed; its ten clean company
+articles are retained and the source is immediately revalidated. The terminal
+repair quarantines the one residual Discourse thread formerly retained under a
+stale blog source and records RADCOM as recovered only after that dedicated
+revalidation crawl completes successfully.
 
 An adapter citation is not sufficient by itself to grant
 `publication_boundary` scope to an unrelated domain. A publication host must

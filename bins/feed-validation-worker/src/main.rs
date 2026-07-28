@@ -19,9 +19,9 @@ async fn main() -> Result<()> {
         .await
         .context("connect to Postgres")?;
     database
-        .migrate()
+        .ensure_schema()
         .await
-        .context("run database migrations")?;
+        .context("ensure database schema")?;
 
     let handler = Arc::new(
         build_validation_job_registry(database.clone(), &settings)

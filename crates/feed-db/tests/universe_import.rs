@@ -15,7 +15,7 @@ async fn imports_idempotently_and_releases_only_an_explicit_wave() {
     let database = Database::connect(&database_url, 5)
         .await
         .expect("connect to test database");
-    database.migrate().await.expect("run migrations");
+    database.ensure_schema().await.expect("ensure schema");
 
     let suffix = &Uuid::new_v4().simple().to_string()[..10];
     let company_key_low = format!("universe-low-{suffix}");

@@ -51,6 +51,6 @@ Then:
 
 - publish a minimal architecture diagram and synthetic dashboard screenshot;
 - triage issues against the documented public/private boundary;
-- keep migrations immutable;
+- keep `schema/postgres.sql` authoritative and review generated schema plans;
 - publish security fixes for the latest release line; and
 - do not publish live crawled content without a separate rights review.

@@ -57,12 +57,13 @@ docker build .
 ## Changes
 
 - Add tests for behavior changes.
-- Add a new numbered migration; never rewrite a migration that may have run.
+- Edit the single `schema/postgres.sql` target for structural database changes,
+  inspect `scripts/schema-plan.sh`, and apply only the generated diff.
 - Update the relevant documentation and `docs/MANIFEST.md`.
 - Keep source discovery separate from API request handling.
 - Preserve URL safety, bounded concurrency, replay evidence, and audit history.
 - Keep public export disabled unless an operator explicitly enables it.
 
-Open a pull request with the problem, approach, verification, and any migration
-or operational impact. Report security issues through [the private security
+Open a pull request with the problem, approach, verification, and any schema
+diff or operational impact. Report security issues through [the private security
 channel](SECURITY.md), not a public issue.

@@ -43,9 +43,10 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Reject edits to existing migrations
-        if: github.event_name == 'pull_request'
-        run: scripts/check-migration-immutability.sh "origin/${{ github.base_ref }}"
+      - name: Require one declarative PostgreSQL schema
+        run: |
+          test -s schema/postgres.sql
+          test ! -d migrations
 
       - name: Install Rust toolchain
         run: |
@@ -85,7 +86,9 @@ jobs:
         run: docker compose -f docker-compose.yml config --quiet
 
       - name: Start clean stack
-        run: docker compose -f docker-compose.yml up --build --detach postgres server
+        run: >-
+          docker compose -f docker-compose.yml --profile content-crawl
+          up --build --detach postgres server content-worker
 
       - name: Verify API and dashboard
         run: |
@@ -95,12 +98,19 @@ jobs:
               curl --fail --silent \
                 http://localhost:8080/api/v1/company-news-recipe-coverage \
                 >/dev/null
+              curl --fail --silent \
+                http://localhost:8080/api/v1/content-crawl-coverage \
+                >/dev/null
+              curl --fail --silent http://localhost:8085/ready >/dev/null
               exit 0
             fi
             sleep 3
           done
           docker compose -f docker-compose.yml logs
           exit 1
+
+      - name: Require zero schema drift
+        run: docker compose -f docker-compose.yml run --rm schema
 
       - name: Stop clean stack
         if: always()
