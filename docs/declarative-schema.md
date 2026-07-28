@@ -32,6 +32,14 @@ SCHEMA_ALLOW_HAZARDS=INDEX_BUILD \
 scripts/schema-apply.sh
 ```
 
+The development Compose bootstrap explicitly acknowledges `INDEX_BUILD` and
+`HAS_UNTRACKABLE_DEPENDENCIES`. The latter is required when creating the
+schema's small PL/pgSQL `set_updated_at` trigger function on a blank database;
+`pg-schema-diff` cannot statically order dependencies inside non-SQL function
+bodies. The function has no user-defined dependencies. Other hazards,
+including data deletion, remain prohibited unless an operator overrides the
+allowlist after reviewing the generated plan.
+
 Application startup never mutates an existing schema. It verifies the required
 tables and returns a drift error directing the operator to the apply script.
 This keeps DDL review and deployment separate from API/worker process startup.

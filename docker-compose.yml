@@ -29,7 +29,7 @@ services:
       - public
       - --skip-confirm-prompt
       - --allow-hazards
-      - ${SCHEMA_ALLOW_HAZARDS:-INDEX_BUILD}
+      - ${SCHEMA_ALLOW_HAZARDS:-INDEX_BUILD,HAS_UNTRACKABLE_DEPENDENCIES}
     environment:
       PGHOST: postgres
       PGPORT: "5432"
