@@ -1,0 +1,235 @@
+{
+  "openapi": "3.1.2",
+  "jsonSchemaDialect": "https://json-schema.org/draft/2020-12/schema",
+  "info": {
+    "title": "Company News Archive",
+    "version": "1.0.0",
+    "description": "Read-only contract for static archive files and compatible HTTP adapters.",
+    "license": {
+      "name": "CC0-1.0 (contract and schemas only)",
+      "identifier": "CC0-1.0"
+    }
+  },
+  "security": [],
+  "servers": [
+    {
+      "url": "https://raw.githubusercontent.com/Shuozeli/company-news-archive/main"
+    }
+  ],
+  "paths": {
+    "/HEAD.json": {
+      "get": {
+        "operationId": "getArchiveHead",
+        "summary": "Resolve the current archive generation",
+        "responses": {
+          "200": {
+            "description": "Current archive head",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../schemas/v1/head.schema.json"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/index/v1/current/manifest.json": {
+      "get": {
+        "operationId": "getArchiveManifest",
+        "summary": "Read the current root manifest",
+        "responses": {
+          "200": {
+            "description": "Current archive manifest",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../schemas/v1/archive-manifest.schema.json"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/index/v1/current/partitions/{year}/{month}/manifest.json": {
+      "get": {
+        "operationId": "getPartitionManifest",
+        "summary": "Read one monthly partition manifest",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Year"
+          },
+          {
+            "$ref": "#/components/parameters/Month"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Monthly partition manifest",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../schemas/v1/partition-manifest.schema.json"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/index/v1/current/partitions/{year}/{month}/shards/{prefix}.jsonl": {
+      "get": {
+        "operationId": "getIndexShard",
+        "summary": "Read one deterministic JSONL index shard",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Year"
+          },
+          {
+            "$ref": "#/components/parameters/Month"
+          },
+          {
+            "name": "prefix",
+            "in": "path",
+            "required": true,
+            "description": "The literal root or a hexadecimal document-id prefix from the partition manifest.",
+            "schema": {
+              "type": "string",
+              "pattern": "^(?:root|[0-9a-f]{1,8})$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "UTF-8 newline-delimited IndexDocument objects",
+            "content": {
+              "application/x-ndjson": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/articles/v1/{companyBucket}/{companyKey}/{year}/{month}/{documentBucket}/{documentId}/record.json": {
+      "get": {
+        "operationId": "getArticleRecord",
+        "summary": "Read canonical metadata for one archived article",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/CompanyBucket"
+          },
+          {
+            "$ref": "#/components/parameters/CompanyKey"
+          },
+          {
+            "$ref": "#/components/parameters/Year"
+          },
+          {
+            "$ref": "#/components/parameters/Month"
+          },
+          {
+            "$ref": "#/components/parameters/DocumentBucket"
+          },
+          {
+            "$ref": "#/components/parameters/DocumentId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Canonical article metadata",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../schemas/v1/article-record.schema.json"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "responses": {
+      "NotFound": {
+        "description": "The requested archive object does not exist in this generation."
+      }
+    },
+    "parameters": {
+      "Year": {
+        "name": "year",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "pattern": "^[0-9]{4}$"
+        }
+      },
+      "Month": {
+        "name": "month",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "pattern": "^(?:0[1-9]|1[0-2])$"
+        }
+      },
+      "CompanyBucket": {
+        "name": "companyBucket",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{2}$"
+        }
+      },
+      "CompanyKey": {
+        "name": "companyKey",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+        }
+      },
+      "DocumentBucket": {
+        "name": "documentBucket",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{2}$"
+        }
+      },
+      "DocumentId": {
+        "name": "documentId",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    }
+  }
+}

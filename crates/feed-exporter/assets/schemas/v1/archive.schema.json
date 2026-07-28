@@ -1,0 +1,610 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/Shuozeli/company-news-archive/main/schemas/v1/archive.schema.json",
+  "title": "Company News Archive v1",
+  "description": "Canonical schemas for the version-controlled company news archive.",
+  "$defs": {
+    "SchemaVersion": {
+      "type": "string",
+      "const": "1.0.0"
+    },
+    "DocumentId": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "Sha256": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "RelativePath": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"
+    },
+    "NullableTimestamp": {
+      "oneOf": [
+        {
+          "type": "string",
+          "format": "date-time"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "CompanyRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "key",
+        "name"
+      ],
+      "properties": {
+        "key": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "SourceRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "kind"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "enum": [
+            "rss",
+            "atom",
+            "html",
+            "browser"
+          ]
+        }
+      }
+    },
+    "UrlSet": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "observed",
+        "canonical"
+      ],
+      "properties": {
+        "observed": {
+          "type": "string",
+          "format": "uri",
+          "pattern": "^https?://"
+        },
+        "canonical": {
+          "type": "string",
+          "format": "uri",
+          "pattern": "^https?://"
+        }
+      }
+    },
+    "ArchivePaths": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "article",
+        "record"
+      ],
+      "properties": {
+        "article": {
+          "$ref": "#/$defs/RelativePath"
+        },
+        "record": {
+          "$ref": "#/$defs/RelativePath"
+        }
+      }
+    },
+    "ContentDescriptor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "media_type",
+        "bytes",
+        "sha256",
+        "normalized_content_hash"
+      ],
+      "properties": {
+        "media_type": {
+          "const": "text/markdown; charset=utf-8"
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sha256": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "normalized_content_hash": {
+          "$ref": "#/$defs/Sha256"
+        }
+      }
+    },
+    "Provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source_item_id",
+        "external_id"
+      ],
+      "properties": {
+        "source_item_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "external_id": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "ArticleRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "document_id",
+        "company",
+        "source",
+        "urls",
+        "title",
+        "summary",
+        "published_at",
+        "first_seen_at",
+        "fetched_at",
+        "last_updated_at",
+        "paths",
+        "content",
+        "provenance"
+      ],
+      "properties": {
+        "schema_version": {
+          "$ref": "#/$defs/SchemaVersion"
+        },
+        "document_id": {
+          "$ref": "#/$defs/DocumentId"
+        },
+        "company": {
+          "$ref": "#/$defs/CompanyRef"
+        },
+        "source": {
+          "$ref": "#/$defs/SourceRef"
+        },
+        "urls": {
+          "$ref": "#/$defs/UrlSet"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "summary": {
+          "type": "string"
+        },
+        "published_at": {
+          "$ref": "#/$defs/NullableTimestamp"
+        },
+        "first_seen_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "fetched_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "last_updated_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "paths": {
+          "$ref": "#/$defs/ArchivePaths"
+        },
+        "content": {
+          "$ref": "#/$defs/ContentDescriptor"
+        },
+        "provenance": {
+          "$ref": "#/$defs/Provenance"
+        }
+      }
+    },
+    "IndexDocument": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "document_id",
+        "company_key",
+        "company_name",
+        "source_id",
+        "source_kind",
+        "canonical_url",
+        "observed_url",
+        "title",
+        "summary",
+        "body_text",
+        "published_at",
+        "first_seen_at",
+        "fetched_at",
+        "last_updated_at",
+        "content_hash",
+        "article_path",
+        "record_path"
+      ],
+      "properties": {
+        "schema_version": {
+          "$ref": "#/$defs/SchemaVersion"
+        },
+        "document_id": {
+          "$ref": "#/$defs/DocumentId"
+        },
+        "company_key": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+        },
+        "company_name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source_kind": {
+          "enum": [
+            "rss",
+            "atom",
+            "html",
+            "browser"
+          ]
+        },
+        "canonical_url": {
+          "type": "string",
+          "format": "uri",
+          "pattern": "^https?://"
+        },
+        "observed_url": {
+          "type": "string",
+          "format": "uri",
+          "pattern": "^https?://"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "summary": {
+          "type": "string"
+        },
+        "body_text": {
+          "type": "string"
+        },
+        "published_at": {
+          "$ref": "#/$defs/NullableTimestamp"
+        },
+        "first_seen_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "fetched_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "last_updated_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "content_hash": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "article_path": {
+          "$ref": "#/$defs/RelativePath"
+        },
+        "record_path": {
+          "$ref": "#/$defs/RelativePath"
+        }
+      }
+    },
+    "ShardDescriptor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "prefix",
+        "path",
+        "record_count",
+        "byte_count",
+        "sha256",
+        "min_document_id",
+        "max_document_id"
+      ],
+      "properties": {
+        "prefix": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{0,8}$"
+        },
+        "path": {
+          "$ref": "#/$defs/RelativePath"
+        },
+        "record_count": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "byte_count": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "sha256": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "min_document_id": {
+          "$ref": "#/$defs/DocumentId"
+        },
+        "max_document_id": {
+          "$ref": "#/$defs/DocumentId"
+        }
+      }
+    },
+    "PartitionManifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "generation",
+        "partition",
+        "record_count",
+        "shard_count",
+        "byte_count",
+        "shards"
+      ],
+      "properties": {
+        "schema_version": {
+          "$ref": "#/$defs/SchemaVersion"
+        },
+        "generation": {
+          "$ref": "#/$defs/DocumentId"
+        },
+        "partition": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}$"
+        },
+        "record_count": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "shard_count": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "byte_count": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "shards": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/ShardDescriptor"
+          }
+        }
+      }
+    },
+    "PartitionDescriptor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "partition",
+        "manifest_path",
+        "record_count",
+        "shard_count",
+        "byte_count",
+        "sha256"
+      ],
+      "properties": {
+        "partition": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}$"
+        },
+        "manifest_path": {
+          "$ref": "#/$defs/RelativePath"
+        },
+        "record_count": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "shard_count": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "byte_count": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "sha256": {
+          "$ref": "#/$defs/Sha256"
+        }
+      }
+    },
+    "PartitioningPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "primary",
+        "secondary",
+        "max_records_per_shard",
+        "target_max_bytes_per_shard",
+        "max_hash_prefix_depth"
+      ],
+      "properties": {
+        "primary": {
+          "const": "archive_month"
+        },
+        "secondary": {
+          "const": "document_id_sha256_prefix_trie"
+        },
+        "max_records_per_shard": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "target_max_bytes_per_shard": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_hash_prefix_depth": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 64
+        }
+      }
+    },
+    "ArchiveManifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "generation",
+        "generated_at",
+        "record_count",
+        "company_count",
+        "first_published_at",
+        "last_published_at",
+        "partitioning",
+        "partitions"
+      ],
+      "properties": {
+        "schema_version": {
+          "$ref": "#/$defs/SchemaVersion"
+        },
+        "generation": {
+          "$ref": "#/$defs/DocumentId"
+        },
+        "generated_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "record_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "company_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "first_published_at": {
+          "$ref": "#/$defs/NullableTimestamp"
+        },
+        "last_published_at": {
+          "$ref": "#/$defs/NullableTimestamp"
+        },
+        "partitioning": {
+          "$ref": "#/$defs/PartitioningPolicy"
+        },
+        "partitions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PartitionDescriptor"
+          }
+        }
+      }
+    },
+    "ArchiveHead": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "generation",
+        "generated_at",
+        "manifest_path",
+        "record_count",
+        "company_count"
+      ],
+      "properties": {
+        "schema_version": {
+          "$ref": "#/$defs/SchemaVersion"
+        },
+        "generation": {
+          "$ref": "#/$defs/DocumentId"
+        },
+        "generated_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "manifest_path": {
+          "$ref": "#/$defs/RelativePath"
+        },
+        "record_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "company_count": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "CompanyPartition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "partition",
+        "record_count"
+      ],
+      "properties": {
+        "partition": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}$"
+        },
+        "record_count": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "CompanyManifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "company",
+        "record_count",
+        "first_published_at",
+        "last_published_at",
+        "partitions"
+      ],
+      "properties": {
+        "schema_version": {
+          "$ref": "#/$defs/SchemaVersion"
+        },
+        "company": {
+          "$ref": "#/$defs/CompanyRef"
+        },
+        "record_count": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "first_published_at": {
+          "$ref": "#/$defs/NullableTimestamp"
+        },
+        "last_published_at": {
+          "$ref": "#/$defs/NullableTimestamp"
+        },
+        "partitions": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/CompanyPartition"
+          }
+        }
+      }
+    }
+  }
+}

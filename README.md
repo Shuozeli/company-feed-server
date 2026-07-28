@@ -353,14 +353,22 @@ evergreen content as new.
 The default exporter writes an owned archive tree:
 
 ```text
+HEAD.json
 README.md
-companies/<COMPANY_KEY>/index.json
-companies/<COMPANY_KEY>/<YYYY>/<MM>/<date>-<slug>-<id>.md
-companies/<COMPANY_KEY>/<YYYY>/<MM>/<date>-<slug>-<id>.json
-feeds/latest.jsonl
-indexes/by_company.json
-indexes/by_date/<date>.json
+articles/v1/<company-hash>/<company-key>/company.json
+articles/v1/<company-hash>/<company-key>/<YYYY>/<MM>/<document-hash>/<document-id>/article.md
+articles/v1/<company-hash>/<company-key>/<YYYY>/<MM>/<document-hash>/<document-id>/record.json
+index/v1/current/manifest.json
+index/v1/current/partitions/<YYYY>/<MM>/manifest.json
+index/v1/current/partitions/<YYYY>/<MM>/shards/<hash-prefix>.jsonl
+schemas/v1/
+openapi/openapi.json
 ```
+
+The JSONL index is partitioned by archival month and adaptively split as a
+SHA-256 prefix trie. Manifests publish record/byte counts and content hashes;
+`HEAD.json` provides a deterministic generation checkpoint. Article identity
+uses company name-first keys and canonical URLs, never a stock ticker.
 
 `push_enabled` is `false` in the sample config. A source must also have
 `public_export_allowed=true`; validation does not grant that permission by

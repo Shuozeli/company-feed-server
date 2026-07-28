@@ -92,10 +92,11 @@ Browser rendering remains an optional adapter expansion.
 ## Phase 9: Git Export
 
 - [x] Add export targets.
-- [x] Materialize Markdown, JSON, and JSONL.
+- [x] Materialize readable Markdown, canonical JSON, and sharded JSONL.
 - [x] Commit locally.
 - [x] Optional explicit push to GitHub.
-- [x] Export indexes.
+- [x] Export adaptive hash-trie indexes with integrity manifests.
+- [x] Publish OpenAPI 3.1 and JSON Schema 2020-12 contracts.
 - [x] Add periodic `export_target` jobs.
 
 ## Phase 10: Company Source Expansion

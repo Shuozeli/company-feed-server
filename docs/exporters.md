@@ -24,33 +24,59 @@ targets:
 
 ```text
 company-news-archive/
-  companies/
-    nvidia/
-      index.json
-      2026/
-        07/
-          2026-07-16-nvidia-announces-example.md
-          2026-07-16-nvidia-announces-example.json
-    amd/
-      index.json
-  feeds/
-    latest.jsonl
-  indexes/
-    by_company.json
-    by_date/
-      2026-07-16.json
+  HEAD.json
+  README.md
+  ARCHITECTURE.md
+  CONTENT_RIGHTS.md
+  articles/v1/
+    <company-hash>/
+      <company-key>/
+        company.json
+        <year>/<month>/<document-hash>/<document-id>/
+          article.md
+          record.json
+  index/v1/current/
+    manifest.json
+    partitions/<year>/<month>/
+      manifest.json
+      shards/
+        root.jsonl
+        <hash-prefix>.jsonl
+  schemas/v1/
+  openapi/openapi.json
+  scripts/validate_archive.py
 ```
 
-## Markdown Format
+The two-character company and document hash buckets keep Git trees narrow while
+company key and date components remain readable. Paths never depend on a stock
+ticker, so private companies use the same layout.
+
+## Identity
+
+`document_id` is a SHA-256 digest over the v1 identity namespace, stable
+company key, and normalized canonical URL. Source-local UUIDs and external IDs
+remain provenance fields but do not control public identity.
+
+The first v1 path is retained through `exported_items`, so a corrected
+publication date does not repeatedly rename an article. A canonical URL
+identity correction intentionally produces a new public identity.
+
+## Article Files
+
+`article.md` is the human-readable normalized article. Its frontmatter contains
+the schema version, document/company/source identity, canonical URL, timestamps,
+and normalized content hash.
 
 ```markdown
 ---
+schema_version: "1.0.0"
+document_id: "7c..."
 company_key: nvidia
 company: NVIDIA
 source_id: co-nvda-newsroom
-url: https://example.com/article
 canonical_url: https://example.com/article
 published_at: 2026-07-16T00:00:00Z
+first_seen_at: 2026-07-16T00:04:00Z
 fetched_at: 2026-07-16T00:05:00Z
 content_hash: sha256:...
 ---
@@ -60,8 +86,40 @@ content_hash: sha256:...
 Article body text.
 ```
 
-Archive paths and frontmatter use `company_key`, so private and public companies
-share one stable layout. Listing symbols are not used in filenames or identity.
+`record.json` is canonical metadata and points to `article.md`; it does not
+duplicate the body. Raw HTML is deliberately omitted. Index JSONL records carry
+normalized plaintext for direct indexing.
+
+## Shards and Manifests
+
+The index first partitions records by archival month. Each partition starts as
+`root.jsonl` and recursively splits on successive hexadecimal characters of
+`document_id` when it exceeds either 5,000 records or 1 MiB. Every JSONL leaf is
+UTF-8, sorted by document ID, compact, and newline terminated.
+
+`HEAD.json` points to the current root manifest. The root references monthly
+partition manifests, which reference leaf shards with:
+
+- SHA-256 prefix;
+- relative path;
+- record and byte counts;
+- SHA-256 content digest; and
+- minimum and maximum document IDs.
+
+The generation ID is a deterministic digest of the schema version and all
+index documents. An unchanged export therefore produces no file or Git commit
+change.
+
+## Schema Contract
+
+Canonical file contracts use JSON Schema Draft 2020-12 under `schemas/v1/`.
+The OpenAPI 3.1.2 document under `openapi/` references those schemas rather than
+maintaining a second model. It describes both the static Git paths and
+compatible read-only HTTP adapters.
+
+Run `python3 scripts/validate_archive.py` inside a generated repository to
+verify schema/OpenAPI JSON parsing, manifest and content hashes, counts, shard
+ordering, unique document IDs, and all record/article references.
 
 ## Export Safety Rules
 

@@ -245,8 +245,10 @@ implementations.
 
 Deterministic Git archive materialization:
 
-- Markdown and JSON article files;
-- JSONL feed and company/date indexes;
+- readable Markdown plus canonical JSON article records;
+- monthly adaptive hash-trie JSONL index shards;
+- OpenAPI 3.1 and JSON Schema 2020-12 contracts;
+- generation, partition, shard, count, and SHA-256 manifests;
 - local commits;
 - optional explicit push;
 - per-target item hash/path state;

@@ -374,7 +374,12 @@ async fn public_feed_becomes_api_item_and_git_archive() {
         }
     );
     assert!(archive_path.join(".git").is_dir());
-    assert!(archive_path.join("feeds/latest.jsonl").is_file());
+    assert!(archive_path.join("HEAD.json").is_file());
+    assert!(
+        archive_path
+            .join("index/v1/current/manifest.json")
+            .is_file()
+    );
     let fixture_exported: bool = sqlx::query_scalar(
         "SELECT EXISTS(
             SELECT 1 FROM exported_items
