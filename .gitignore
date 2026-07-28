@@ -3,5 +3,11 @@
 /.env.*
 !/.env.example
 /exports/
+/artifacts/
 /.sqlx/
 *.log
+/.DS_Store
+/.idea/
+/.vscode/
+/docs/handoff-*.md
+/configs/*.local.yaml

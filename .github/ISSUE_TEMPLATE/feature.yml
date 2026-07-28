@@ -1,0 +1,36 @@
+name: Feature request
+description: Propose a generic, provider-neutral product improvement.
+title: "feature: "
+labels:
+  - enhancement
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What user or operator problem should be solved?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Describe the public, provider-neutral behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives
+      description: What other approaches did you consider?
+  - type: checkboxes
+    id: boundary
+    attributes:
+      label: Project boundary
+      options:
+        - label: This does not require credentials or private provider implementation.
+          required: true
+        - label: This does not bypass authentication, paywalls, or access controls.
+          required: true
+        - label: I agree to follow the project's Code of Conduct.
+          required: true

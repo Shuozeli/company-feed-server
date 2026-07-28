@@ -1,22 +1,45 @@
 companies:
-  - ticker: NVDA
+  - company_key: nvidia
     name: NVIDIA
+    aliases:
+      - NVIDIA Corporation
+    ownership_status: public
+    lifecycle_status: active
+    listings:
+      - ticker: NVDA
+        exchange: NASDAQ
+        is_primary: true
     homepage_url: https://www.nvidia.com/
     investor_relations_url: https://investor.nvidia.com/
     hints:
       - https://nvidianews.nvidia.com/
 
-  - ticker: AMD
+  - company_key: amd
     name: AMD
+    aliases:
+      - Advanced Micro Devices
+    ownership_status: public
+    lifecycle_status: active
+    listings:
+      - ticker: AMD
+        exchange: NASDAQ
+        is_primary: true
     homepage_url: https://www.amd.com/
     investor_relations_url: https://ir.amd.com/
     hints:
       - https://www.amd.com/en/newsroom.html
 
-  - ticker: AAPL
+  - company_key: apple
     name: Apple
+    aliases:
+      - Apple Inc.
+    ownership_status: public
+    lifecycle_status: active
+    listings:
+      - ticker: AAPL
+        exchange: NASDAQ
+        is_primary: true
     homepage_url: https://www.apple.com/
     investor_relations_url: https://investor.apple.com/
     hints:
       - https://www.apple.com/newsroom/
-

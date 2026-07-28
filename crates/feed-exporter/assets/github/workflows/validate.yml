@@ -1,0 +1,17 @@
+name: Validate archive
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  archive:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Validate manifests, shards, and article references
+        run: python3 scripts/validate_archive.py

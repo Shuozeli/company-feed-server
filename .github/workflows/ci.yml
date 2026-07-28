@@ -1,0 +1,107 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: "1"
+
+jobs:
+  quality:
+    name: quality
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: company_feed_test
+          POSTGRES_USER: company_feed
+          POSTGRES_PASSWORD: company_feed
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U company_feed -d company_feed_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgresql://company_feed:company_feed@localhost:5432/company_feed_test
+      TEST_DATABASE_URL: postgresql://company_feed:company_feed@localhost:5432/company_feed_test
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Reject edits to existing migrations
+        if: github.event_name == 'pull_request'
+        run: scripts/check-migration-immutability.sh "origin/${{ github.base_ref }}"
+
+      - name: Install Rust toolchain
+        run: |
+          rustup toolchain install 1.88.0 --profile minimal --component clippy,rustfmt
+          rustup default 1.88.0
+
+      - name: Cache Cargo
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: cargo-${{ runner.os }}-1.88.0-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            cargo-${{ runner.os }}-1.88.0-
+
+      - name: Check formatting
+        run: cargo fmt --all --check
+
+      - name: Lint
+        run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+
+      - name: Test
+        run: cargo test --locked --workspace --all-features --all-targets -- --test-threads=1
+
+  compose-smoke:
+    name: compose-smoke
+    needs: quality
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Validate Compose
+        run: docker compose -f docker-compose.yml config --quiet
+
+      - name: Start clean stack
+        run: docker compose -f docker-compose.yml up --build --detach postgres server
+
+      - name: Verify API and dashboard
+        run: |
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent http://localhost:8080/ready >/dev/null; then
+              curl --fail --silent http://localhost:8080/news >/dev/null
+              curl --fail --silent \
+                http://localhost:8080/api/v1/company-news-recipe-coverage \
+                >/dev/null
+              exit 0
+            fi
+            sleep 3
+          done
+          docker compose -f docker-compose.yml logs
+          exit 1
+
+      - name: Stop clean stack
+        if: always()
+        run: docker compose -f docker-compose.yml down --volumes
