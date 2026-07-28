@@ -140,12 +140,6 @@ pub fn build_content_crawl_job_registry(
                 "CONTENT_CRAWL_BATCH_SIZE exceeds the supported range".to_owned(),
             )
         })?,
-        min_existing_content_chars: i32::try_from(settings.content_crawl_min_content_chars)
-            .map_err(|_| {
-                JobBootstrapError::InvalidConfig(
-                    "CONTENT_CRAWL_MIN_CONTENT_CHARS exceeds the supported range".to_owned(),
-                )
-            })?,
         refresh: settings.content_crawl_refresh,
         max_attempts: settings.content_crawl_max_attempts,
         retry_base: settings.job_retry_base,
@@ -236,7 +230,6 @@ pub struct ContentCrawlJobHandler {
     database: Database,
     crawler: HtmlArticleCrawler,
     batch_size: i64,
-    min_existing_content_chars: i32,
     refresh: std::time::Duration,
     max_attempts: i32,
     retry_base: std::time::Duration,
@@ -255,13 +248,7 @@ impl JobHandler for ContentCrawlJobHandler {
             .map_err(|_| JobHandlerError::permanent("content refresh duration is out of range"))?;
         let candidates = self
             .database
-            .begin_content_crawl_batch(
-                job.id,
-                now,
-                now - refresh,
-                self.min_existing_content_chars,
-                self.batch_size,
-            )
+            .begin_content_crawl_batch(job.id, now, now - refresh, self.batch_size)
             .await
             .map_err(|error| JobHandlerError::retryable(error.to_string()))?;
         if candidates.is_empty() {
@@ -7874,7 +7861,6 @@ pub struct ContentCrawlJobProducer {
     database: Database,
     scan_interval: std::time::Duration,
     refresh: std::time::Duration,
-    min_existing_content_chars: i32,
     job_concurrency: i32,
 }
 
@@ -7883,20 +7869,12 @@ impl ContentCrawlJobProducer {
         database: Database,
         scan_interval: std::time::Duration,
         refresh: std::time::Duration,
-        min_existing_content_chars: usize,
         job_concurrency: u32,
     ) -> Result<Self, JobBootstrapError> {
         Ok(Self {
             database,
             scan_interval,
             refresh,
-            min_existing_content_chars: i32::try_from(min_existing_content_chars).map_err(
-                |_| {
-                    JobBootstrapError::InvalidConfig(
-                        "CONTENT_CRAWL_MIN_CONTENT_CHARS exceeds the supported range".to_owned(),
-                    )
-                },
-            )?,
             job_concurrency: i32::try_from(job_concurrency).map_err(|_| {
                 JobBootstrapError::InvalidConfig(
                     "CONTENT_CRAWL_JOB_CONCURRENCY exceeds the supported range".to_owned(),
@@ -7910,12 +7888,7 @@ impl ContentCrawlJobProducer {
         let refresh = Duration::from_std(self.refresh)
             .map_err(|_| feed_db::DatabaseError::InvalidDuration(self.refresh))?;
         self.database
-            .enqueue_due_content_crawl_job(
-                now,
-                now - refresh,
-                self.min_existing_content_chars,
-                self.job_concurrency,
-            )
+            .enqueue_due_content_crawl_job(now, now - refresh, self.job_concurrency)
             .await
     }
 

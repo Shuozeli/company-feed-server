@@ -87,7 +87,6 @@ async fn content_crawl_state_tracks_success_refresh_and_retry() {
             first_job,
             first_started_at,
             first_started_at - ChronoDuration::days(30),
-            200,
             10,
         )
         .await
@@ -160,7 +159,6 @@ async fn content_crawl_state_tracks_success_refresh_and_retry() {
             not_due_job,
             completed_at + ChronoDuration::minutes(30),
             completed_at - ChronoDuration::minutes(30),
-            200,
             10,
         )
         .await
@@ -174,7 +172,6 @@ async fn content_crawl_state_tracks_success_refresh_and_retry() {
             retry_job,
             retry_started_at,
             completed_at + ChronoDuration::hours(1),
-            200,
             10,
         )
         .await
@@ -255,31 +252,72 @@ async fn concurrent_content_batches_claim_disjoint_items() {
     let source_id: Uuid = sqlx::query_scalar(
         r#"
         INSERT INTO sources (source_id, company_id, kind, url, status)
-        VALUES ($1, $2, 'rss', $3, 'approved')
+        VALUES ($1, $2, 'html', $3, 'approved')
         RETURNING id
         "#,
     )
     .bind(format!("content-claim-source-{}", &suffix[..12]))
     .bind(company_id)
-    .bind(format!("https://{suffix}.example.test/feed.xml"))
+    .bind(format!("https://{suffix}.example.test/news/"))
     .fetch_one(database.pool())
     .await
     .expect("insert claim fixture source");
+    let recipe_id: Uuid = sqlx::query_scalar(
+        r#"
+        INSERT INTO company_news_recipes (
+            recipe_key, company_id, source_id, version, status,
+            schema_version, spec, content_hash, verified_at
+        )
+        VALUES (
+            $1, $2, $3, 1, 'active', 'company-news-recipe.v1',
+            jsonb_build_object('publication_url', $4::text),
+            $5, CURRENT_TIMESTAMP
+        )
+        RETURNING id
+        "#,
+    )
+    .bind(format!("content-claim-recipe-{}", &suffix[..12]))
+    .bind(company_id)
+    .bind(source_id)
+    .bind(format!("https://{suffix}.example.test/news/"))
+    .bind(format!("sha256:content-claim-recipe:{suffix}"))
+    .fetch_one(database.pool())
+    .await
+    .expect("insert claim fixture recipe");
+    sqlx::query(
+        r#"
+        INSERT INTO company_news_recipe_state (
+            recipe_id, freshness_status, correctness_status, rebuild_required
+        )
+        VALUES ($1, 'fresh', 'passing', false)
+        "#,
+    )
+    .bind(recipe_id)
+    .execute(database.pool())
+    .await
+    .expect("insert claim fixture recipe state");
+    let existing_body = "Existing substantive recipe article body. ".repeat(12);
     for index in 0..4 {
         let url = format!("https://{suffix}.example.test/news/{index}");
         sqlx::query(
             r#"
             INSERT INTO feed_items (
                 company_id, source_id, external_id, url, canonical_url,
-                title, fetched_at, content_hash, source_kind
+                title, body_text, body_html, body_markdown,
+                fetched_at, content_hash, source_kind
             )
-            VALUES ($1, $2, $3, $3, $3, $4, CURRENT_TIMESTAMP, $5, 'rss')
+            VALUES (
+                $1, $2, $3, $3, $3, $4, $5, $6, $5,
+                CURRENT_TIMESTAMP, $7, 'html'
+            )
             "#,
         )
         .bind(company_id)
         .bind(source_id)
         .bind(url)
         .bind(format!("Claim fixture {index}"))
+        .bind(&existing_body)
+        .bind(format!("<p>{existing_body}</p>"))
         .bind(format!("sha256:claim:{suffix}:{index}"))
         .execute(database.pool())
         .await
@@ -290,9 +328,8 @@ async fn concurrent_content_batches_claim_disjoint_items() {
     let second_job = content_job(&database, company_id, &suffix, "claim-second").await;
     let now = Utc::now();
     let (first, second) = tokio::join!(
-        database.begin_content_crawl_batch(first_job, now, now - ChronoDuration::days(30), 200, 2,),
-        database
-            .begin_content_crawl_batch(second_job, now, now - ChronoDuration::days(30), 200, 2,),
+        database.begin_content_crawl_batch(first_job, now, now - ChronoDuration::days(30), 2,),
+        database.begin_content_crawl_batch(second_job, now, now - ChronoDuration::days(30), 2,),
     );
     let first = first.expect("claim first batch");
     let second = second.expect("claim second batch");

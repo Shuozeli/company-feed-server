@@ -4,10 +4,17 @@ Company Feed Server separates article discovery from article-content
 hydration.
 
 `crawl_source` discovers stable article identities from RSS, Atom, or a
-validated HTML recipe and stores the source payload. Feed payloads may contain
-only a title, link, or excerpt. `crawl_content` then fetches the public article
-URL independently and replaces the item body with sanitized HTML, Markdown,
-and plain text.
+validated HTML recipe and stores the source observation. That observation may
+contain only a title, link, or excerpt; recipe validation may already have
+encountered a full page. Neither case substitutes for hydration.
+`crawl_content` fetches every eligible public article URL independently and,
+on success, replaces the item body with sanitized HTML, Markdown, and plain
+text.
+
+RSS, Atom, HTML, and browser-backed items all pass through the same durable
+content state. Existing substantive text is never used as a reason to skip the
+independent visit. If that visit fails, the earlier source observation remains
+available while the crawl state records the retry or permanent failure.
 
 ## Runtime
 

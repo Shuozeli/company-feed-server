@@ -142,9 +142,10 @@ cargo run -p feed-admin -- content-crawl status
 
 Discovery/source crawling and content crawling are deliberately separate.
 Source crawling finds article identities and keeps feeds current; the content
-worker fetches each public article page, replaces feed excerpts with sanitized
-HTML/Markdown/text, records failures, and refreshes successful content after
-the configured interval.
+worker independently fetches every eligible public article page regardless of
+source type or pre-existing body, replaces source observations with sanitized
+HTML/Markdown/text on success, records failures, and refreshes successful
+content after the configured interval.
 
 Start discovery only when its inputs and optional adapter are configured:
 

@@ -61,7 +61,6 @@ impl Database {
         &self,
         now: DateTime<Utc>,
         refresh_before: DateTime<Utc>,
-        min_existing_content_chars: i32,
         job_concurrency: i32,
     ) -> Result<u64, DatabaseError> {
         let result = sqlx::query(
@@ -95,11 +94,6 @@ impl Database {
                         AND (
                             item.published_at IS NULL
                             OR item.published_at <= $1
-                        )
-                        AND (
-                            source.kind IN ('rss', 'atom')
-                            OR length(btrim(item.body_text))
-                                < $3
                         )
                         AND (
                             source.kind IN ('rss', 'atom')
@@ -138,7 +132,7 @@ impl Database {
                     WHERE
                         active.job_type = 'crawl_content'
                         AND active.status IN ('pending', 'running')
-                ) < $4
+                ) < $3
             ON CONFLICT (job_type, job_key)
                 WHERE status IN ('pending', 'running')
             DO NOTHING
@@ -146,7 +140,6 @@ impl Database {
         )
         .bind(now)
         .bind(refresh_before)
-        .bind(min_existing_content_chars)
         .bind(job_concurrency)
         .execute(self.pool())
         .await?;
@@ -158,7 +151,6 @@ impl Database {
         job_id: Uuid,
         now: DateTime<Utc>,
         refresh_before: DateTime<Utc>,
-        min_existing_content_chars: i32,
         batch_size: i64,
     ) -> Result<Vec<ContentCrawlCandidate>, DatabaseError> {
         let mut transaction = self.pool().begin().await?;
@@ -228,10 +220,6 @@ impl Database {
                 )
                 AND (
                     source.kind IN ('rss', 'atom')
-                    OR length(btrim(item.body_text)) < $3
-                )
-                AND (
-                    source.kind IN ('rss', 'atom')
                     OR EXISTS (
                         SELECT 1
                         FROM company_news_recipes AS recipe
@@ -268,13 +256,12 @@ impl Database {
                 END,
                 COALESCE(item.published_at, item.created_at) DESC,
                 item.id
-            LIMIT $4
+            LIMIT $3
             FOR UPDATE OF item SKIP LOCKED
             "#,
         )
         .bind(now)
         .bind(refresh_before)
-        .bind(min_existing_content_chars)
         .bind(batch_size)
         .fetch_all(&mut *transaction)
         .await?;

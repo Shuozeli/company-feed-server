@@ -59,7 +59,6 @@ async fn main() -> Result<()> {
             database.clone(),
             settings.job_poll_interval,
             settings.content_crawl_refresh,
-            settings.content_crawl_min_content_chars,
             settings.content_crawl_job_concurrency,
         )
         .context("configure article content crawl producer")?;

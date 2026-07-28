@@ -157,8 +157,6 @@ enum CandidateCommand {
 enum ContentCrawlCommand {
     /// Queue the next due batch for the content worker.
     Enqueue {
-        #[arg(long, default_value_t = 200)]
-        min_content_chars: i32,
         #[arg(long, default_value_t = 2_592_000)]
         refresh_seconds: i64,
     },
@@ -286,13 +284,7 @@ async fn main() -> Result<()> {
 
 async fn handle_content_crawl(database: &Database, command: ContentCrawlCommand) -> Result<()> {
     match command {
-        ContentCrawlCommand::Enqueue {
-            min_content_chars,
-            refresh_seconds,
-        } => {
-            if min_content_chars <= 0 {
-                bail!("min-content-chars must be positive");
-            }
+        ContentCrawlCommand::Enqueue { refresh_seconds } => {
             if refresh_seconds <= 0 {
                 bail!("refresh-seconds must be positive");
             }
@@ -301,7 +293,6 @@ async fn handle_content_crawl(database: &Database, command: ContentCrawlCommand)
                 .enqueue_due_content_crawl_job(
                     now,
                     now - chrono::Duration::seconds(refresh_seconds),
-                    min_content_chars,
                     1,
                 )
                 .await
@@ -311,7 +302,6 @@ async fn handle_content_crawl(database: &Database, command: ContentCrawlCommand)
                 serde_json::to_string_pretty(&serde_json::json!({
                     "scheduled_jobs": scheduled,
                     "job_type": JobType::CrawlContent,
-                    "min_content_chars": min_content_chars,
                     "refresh_seconds": refresh_seconds,
                 }))?
             );
