@@ -1,0 +1,39 @@
+name: Security audit
+
+on:
+  push:
+    paths:
+      - Cargo.lock
+      - Cargo.toml
+      - "crates/**/Cargo.toml"
+      - "bins/**/Cargo.toml"
+      - ".github/workflows/security-audit.yml"
+  pull_request:
+    paths:
+      - Cargo.lock
+      - Cargo.toml
+      - "crates/**/Cargo.toml"
+      - "bins/**/Cargo.toml"
+      - ".github/workflows/security-audit.yml"
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  rustsec:
+    name: rustsec
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Install cargo-audit
+        run: rustup run stable cargo install cargo-audit --locked --version 0.22.2
+
+      - name: Audit Cargo.lock
+        # SQLx records its disabled MySQL backend in Cargo.lock. The project
+        # builds only PostgreSQL; `cargo tree -i rsa` is empty.
+        run: cargo audit --deny warnings --ignore RUSTSEC-2023-0071

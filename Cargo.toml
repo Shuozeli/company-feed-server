@@ -1,9 +1,66 @@
 [workspace]
 resolver = "2"
-members = []
+members = ["crates/*", "bins/*"]
 
 [workspace.package]
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/Shuozeli/company-feed-server"
+rust-version = "1.88"
 
+[workspace.dependencies]
+anyhow = "1.0"
+async-trait = "0.1"
+axum = "0.8"
+chrono = { version = "0.4", features = ["serde"] }
+clap = { version = "4.6", features = ["derive", "env"] }
+feed-content = { path = "crates/feed-content" }
+feed-core = { path = "crates/feed-core" }
+feed-db = { path = "crates/feed-db" }
+feed-jobs = { path = "crates/feed-jobs" }
+feed-scheduler = { path = "crates/feed-scheduler" }
+feed-universe = { path = "crates/feed-universe" }
+feed-web-adapter = { path = "crates/feed-web-adapter" }
+feed-rs = "2.4"
+futures-util = "0.3"
+hex = "0.4"
+html-escape = "0.2"
+reqwest = { version = "0.13", default-features = false, features = [
+  "brotli",
+  "charset",
+  "deflate",
+  "gzip",
+  "http2",
+  "json",
+  "rustls",
+  "stream",
+] }
+scraper = "0.27"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_yaml = { package = "serde_yaml_ng", version = "0.10" }
+sha2 = "0.11"
+sqlx = { version = "0.8", default-features = false, features = [
+  "chrono",
+  "json",
+  "macros",
+  "migrate",
+  "postgres",
+  "runtime-tokio-rustls",
+  "uuid",
+] }
+thiserror = "2.0"
+tokio = { version = "1.0", features = [
+  "macros",
+  "net",
+  "rt-multi-thread",
+  "signal",
+  "sync",
+  "time",
+] }
+tokio-util = { version = "0.7", features = ["rt"] }
+tower-http = { version = "0.6", features = ["cors", "request-id", "trace"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+url = { version = "2.5", features = ["serde"] }
+uuid = { version = "1.0", features = ["serde", "v4"] }

@@ -1,0 +1,7 @@
+services:
+  server:
+    ports:
+      - target: 8080
+        published: "${SERVER_PORT:-8080}"
+        host_ip: "${TAILSCALE_BIND_IP:?set TAILSCALE_BIND_IP to this host's Tailscale IPv4 address}"
+        protocol: tcp

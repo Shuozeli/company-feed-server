@@ -1,0 +1,19 @@
+[package]
+name = "feed-server"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+anyhow.workspace = true
+axum.workspace = true
+feed-api = { path = "../../crates/feed-api" }
+feed-core.workspace = true
+feed-db.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true

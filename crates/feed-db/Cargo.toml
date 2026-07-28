@@ -1,0 +1,25 @@
+[package]
+name = "feed-db"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish = false
+
+[features]
+postgres-tests = []
+
+[dependencies]
+chrono.workspace = true
+feed-core.workspace = true
+feed-universe.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sqlx.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+url.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true

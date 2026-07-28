@@ -1,0 +1,11 @@
+.git
+.env*
+!.env.example
+exports
+artifacts
+target
+*.log
+docs/*
+!docs/news-viewer.html
+docs/handoff-*.md
+configs/*.local.yaml
