@@ -1,5 +1,4 @@
 use feed_core::{CompaniesConfig, ExportTargetsConfig};
-use serde_json::Value;
 use sqlx::{Postgres, Transaction};
 
 use crate::{Database, DatabaseError};
@@ -163,7 +162,8 @@ async fn upsert_export_target(
             layout = EXCLUDED.layout,
             cadence_seconds = EXCLUDED.cadence_seconds,
             enabled = EXCLUDED.enabled,
-            push_enabled = EXCLUDED.push_enabled
+            push_enabled = EXCLUDED.push_enabled,
+            metadata = EXCLUDED.metadata
         "#,
     )
     .bind(&target.target_id)
@@ -175,7 +175,7 @@ async fn upsert_export_target(
     .bind(cadence_seconds)
     .bind(target.enabled)
     .bind(target.push_enabled)
-    .bind(Value::Object(Default::default()))
+    .bind(&target.metadata)
     .execute(&mut **transaction)
     .await?;
 

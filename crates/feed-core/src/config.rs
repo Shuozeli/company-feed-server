@@ -7,6 +7,7 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use serde_json::Value;
 use url::Url;
 
 use crate::{
@@ -190,6 +191,12 @@ impl ExportTargetsConfig {
                     target.target_id
                 )));
             }
+            if !target.metadata.is_object() {
+                return Err(ConfigError::Validation(format!(
+                    "export target {} metadata must be an object",
+                    target.target_id
+                )));
+            }
         }
 
         Ok(config)
@@ -212,6 +219,8 @@ pub struct ExportTargetSeed {
     pub enabled: bool,
     #[serde(default)]
     pub push_enabled: bool,
+    #[serde(default = "default_json_object")]
+    pub metadata: Value,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -842,6 +851,10 @@ const fn default_true() -> bool {
     true
 }
 
+fn default_json_object() -> Value {
+    Value::Object(Default::default())
+}
+
 fn is_company_key(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 160
@@ -898,6 +911,29 @@ targets:
         assert_eq!(target.cadence_seconds, 3_600);
         assert!(target.enabled);
         assert!(!target.push_enabled);
+        assert_eq!(target.metadata, default_json_object());
+    }
+
+    #[test]
+    fn export_metadata_accepts_publication_scope() {
+        let parsed: ExportTargetsConfig = serde_yaml::from_str(
+            r#"
+targets:
+  - target_id: archive
+    repo_url: git@example.com:org/archive.git
+    local_path: ./archive
+    format: markdown_json
+    layout: by_company_date
+    metadata:
+      publication_scope: approved_public
+"#,
+        )
+        .expect("valid config");
+
+        assert_eq!(
+            parsed.targets[0].metadata["publication_scope"],
+            "approved_public"
+        );
     }
 
     #[test]
