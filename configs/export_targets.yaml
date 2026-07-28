@@ -1,6 +1,6 @@
 targets:
   - target_id: company-news-archive
-    repo_url: https://github.com/your-org/company-news-archive.git
+    repo_url: https://github.com/Shuozeli/company-news-archive.git
     local_path: ./exports/company-news-archive
     branch: main
     format: markdown_json

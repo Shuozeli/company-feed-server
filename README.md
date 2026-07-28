@@ -365,6 +365,9 @@ schemas/v1/
 openapi/openapi.json
 ```
 
+The maintained output is published in
+[company-news-archive](https://github.com/Shuozeli/company-news-archive).
+
 The JSONL index is partitioned by archival month and adaptively split as a
 SHA-256 prefix trie. Manifests publish record/byte counts and content hashes;
 `HEAD.json` provides a deterministic generation checkpoint. Article identity
