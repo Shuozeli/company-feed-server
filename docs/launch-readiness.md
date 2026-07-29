@@ -59,6 +59,28 @@ validation, and lazy UI loading. This blocker is resolved only after a fresh
 consumer can obtain and validate the documented distribution without cloning an
 unbounded monolithic history.
 
+### Canonical company identity
+
+The current imported universe still contains security-level display names such
+as “Common Stock” and “Ordinary Shares.” Multiple share classes can also appear
+as separate company nodes even when they resolve to the same corporate entity
+and article set. That contradicts the product's name-first identity model and
+makes category browsing look ticker-derived even though the runtime does not
+use tickers as identity.
+
+Before launch:
+
+1. retain raw universe and listing labels as aliases or provenance;
+2. add a canonical corporate display name and stable entity key;
+3. map multiple listings and share classes to one company entity;
+4. publish redirects or an explicit compatibility map for superseded keys; and
+5. regenerate and verify company/category indexes without duplicate
+   share-class article branches.
+
+This blocker is resolved when the public reader and archive expose one
+unambiguous company node per corporate entity while retaining the original
+listing evidence.
+
 ## Existing Foundations
 
 - The server, generated data archive, static UI, and public reader are separate
@@ -91,15 +113,15 @@ Record links or artifacts for every gate against the proposed release commit:
   boundary, publication scope, and known limitations;
 - correction, security, and contribution routes tested from a logged-out
   browser; and
-- final rights and archive-scale blockers explicitly signed off by the
-  maintainer responsible for publication.
+- final rights, archive-scale, and company-identity blockers explicitly signed
+  off by the maintainer responsible for publication.
 
 Do not record a fixed passing-test count here. Link to the immutable CI run for
 the release commit instead.
 
 ## Publication Sequence
 
-1. Resolve both blocking decisions above.
+1. Resolve all blocking decisions above.
 2. Run the exact-commit preflight from a clean clone.
 3. Review `git archive` output rather than copying a maintainer worktree.
 4. Date the changelog and tag the reviewed commit.

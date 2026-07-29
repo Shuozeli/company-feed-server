@@ -20,6 +20,8 @@ worksheet supplies verification prompts only.
       [`launch-readiness.md`](launch-readiness.md) is resolved.
 - [ ] The unbounded Git archive scale problem is resolved and the documented
       consumer path works from a fresh machine.
+- [ ] Company display names and keys represent corporate entities rather than
+      duplicate security or share-class records.
 - [ ] The public reader works while logged out, without signup or an email gate.
 - [ ] A clean clone follows the README quick start successfully.
 - [ ] The release commit has passing CI, security, schema, archive-validator,
