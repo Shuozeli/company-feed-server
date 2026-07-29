@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://raw.githubusercontent.com/Shuozeli/company-news-archive/main/schemas/v1/archive.schema.json",
-  "title": "Company News Archive v1",
-  "description": "Canonical schemas for the version-controlled company news archive.",
+  "$id": "https://raw.githubusercontent.com/Shuozeli/company-news-data/main/schemas/v1/archive.schema.json",
+  "title": "Company News Data v1",
+  "description": "Canonical schemas for the version-controlled company news dataset.",
   "$defs": {
     "SchemaVersion": {
       "type": "string",
@@ -603,6 +603,443 @@
           "items": {
             "$ref": "#/$defs/CompanyPartition"
           }
+        },
+        "article_index": {
+          "$ref": "#/$defs/CompanyArticleIndex"
+        }
+      }
+    },
+    "ArticleSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "document_id",
+        "company_key",
+        "company_name",
+        "source_id",
+        "source_kind",
+        "canonical_url",
+        "title",
+        "summary",
+        "published_at",
+        "fetched_at",
+        "article_path",
+        "record_path"
+      ],
+      "properties": {
+        "schema_version": {
+          "$ref": "#/$defs/SchemaVersion"
+        },
+        "document_id": {
+          "$ref": "#/$defs/DocumentId"
+        },
+        "company_key": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+        },
+        "company_name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source_kind": {
+          "enum": [
+            "rss",
+            "atom",
+            "html",
+            "browser"
+          ]
+        },
+        "canonical_url": {
+          "type": "string",
+          "format": "uri",
+          "pattern": "^https?://"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "summary": {
+          "type": "string"
+        },
+        "published_at": {
+          "$ref": "#/$defs/NullableTimestamp"
+        },
+        "fetched_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "article_path": {
+          "$ref": "#/$defs/RelativePath"
+        },
+        "record_path": {
+          "$ref": "#/$defs/RelativePath"
+        }
+      }
+    },
+    "PageDescriptor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "page",
+        "path",
+        "record_count",
+        "byte_count",
+        "sha256",
+        "newest_at",
+        "oldest_at"
+      ],
+      "properties": {
+        "page": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "path": {
+          "$ref": "#/$defs/RelativePath"
+        },
+        "record_count": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 50
+        },
+        "byte_count": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "sha256": {
+          "$ref": "#/$defs/Sha256"
+        },
+        "newest_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "oldest_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "BrowsePage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "generation",
+        "page",
+        "record_count",
+        "items"
+      ],
+      "properties": {
+        "schema_version": {
+          "$ref": "#/$defs/SchemaVersion"
+        },
+        "generation": {
+          "$ref": "#/$defs/DocumentId"
+        },
+        "page": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "record_count": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 50
+        },
+        "items": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 50,
+          "items": {
+            "$ref": "#/$defs/ArticleSummary"
+          }
+        }
+      }
+    },
+    "CompanyArticleIndex": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "generation",
+        "sort",
+        "page_size",
+        "page_count",
+        "pages"
+      ],
+      "properties": {
+        "generation": {
+          "$ref": "#/$defs/DocumentId"
+        },
+        "sort": {
+          "const": "published_at_desc_fetched_at_desc"
+        },
+        "page_size": {
+          "const": 50
+        },
+        "page_count": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "pages": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/PageDescriptor"
+          }
+        }
+      }
+    },
+    "RecentManifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "generation",
+        "sort",
+        "page_size",
+        "record_count",
+        "page_count",
+        "pages"
+      ],
+      "properties": {
+        "schema_version": {
+          "$ref": "#/$defs/SchemaVersion"
+        },
+        "generation": {
+          "$ref": "#/$defs/DocumentId"
+        },
+        "sort": {
+          "const": "published_at_desc_fetched_at_desc"
+        },
+        "page_size": {
+          "const": 50
+        },
+        "record_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "page_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "pages": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PageDescriptor"
+          }
+        }
+      }
+    },
+    "CompanyDirectoryEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "company_key",
+        "company_name",
+        "record_count",
+        "first_published_at",
+        "last_published_at",
+        "company_manifest_path"
+      ],
+      "properties": {
+        "company_key": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+        },
+        "company_name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "record_count": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "first_published_at": {
+          "$ref": "#/$defs/NullableTimestamp"
+        },
+        "last_published_at": {
+          "$ref": "#/$defs/NullableTimestamp"
+        },
+        "company_manifest_path": {
+          "$ref": "#/$defs/RelativePath"
+        }
+      }
+    },
+    "CompanyDirectoryBucketDescriptor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "bucket",
+        "path",
+        "company_count",
+        "byte_count",
+        "sha256"
+      ],
+      "properties": {
+        "bucket": {
+          "type": "string",
+          "pattern": "^(?:[a-z]|0-9|other)$"
+        },
+        "path": {
+          "$ref": "#/$defs/RelativePath"
+        },
+        "company_count": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "byte_count": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "sha256": {
+          "$ref": "#/$defs/Sha256"
+        }
+      }
+    },
+    "CompanyDirectoryBucket": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "generation",
+        "bucket",
+        "company_count",
+        "companies"
+      ],
+      "properties": {
+        "schema_version": {
+          "$ref": "#/$defs/SchemaVersion"
+        },
+        "generation": {
+          "$ref": "#/$defs/DocumentId"
+        },
+        "bucket": {
+          "type": "string",
+          "pattern": "^(?:[a-z]|0-9|other)$"
+        },
+        "company_count": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "companies": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/CompanyDirectoryEntry"
+          }
+        }
+      }
+    },
+    "CompanyDirectoryManifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "generation",
+        "company_count",
+        "bucket_count",
+        "buckets"
+      ],
+      "properties": {
+        "schema_version": {
+          "$ref": "#/$defs/SchemaVersion"
+        },
+        "generation": {
+          "$ref": "#/$defs/DocumentId"
+        },
+        "company_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "bucket_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 37
+        },
+        "buckets": {
+          "type": "array",
+          "maxItems": 37,
+          "items": {
+            "$ref": "#/$defs/CompanyDirectoryBucketDescriptor"
+          }
+        }
+      }
+    },
+    "DataIndexPaths": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "head",
+        "archive_manifest",
+        "recent_manifest",
+        "company_directory_manifest",
+        "openapi",
+        "content_rights"
+      ],
+      "properties": {
+        "head": {
+          "$ref": "#/$defs/RelativePath"
+        },
+        "archive_manifest": {
+          "$ref": "#/$defs/RelativePath"
+        },
+        "recent_manifest": {
+          "$ref": "#/$defs/RelativePath"
+        },
+        "company_directory_manifest": {
+          "$ref": "#/$defs/RelativePath"
+        },
+        "openapi": {
+          "$ref": "#/$defs/RelativePath"
+        },
+        "content_rights": {
+          "$ref": "#/$defs/RelativePath"
+        }
+      }
+    },
+    "DataIndex": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contract_version",
+        "dataset",
+        "schema_version",
+        "generation",
+        "generated_at",
+        "record_count",
+        "company_count",
+        "paths"
+      ],
+      "properties": {
+        "contract_version": {
+          "const": "1.0.0"
+        },
+        "dataset": {
+          "const": "company-news-data"
+        },
+        "schema_version": {
+          "$ref": "#/$defs/SchemaVersion"
+        },
+        "generation": {
+          "$ref": "#/$defs/DocumentId"
+        },
+        "generated_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "record_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "company_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "paths": {
+          "$ref": "#/$defs/DataIndexPaths"
         }
       }
     }

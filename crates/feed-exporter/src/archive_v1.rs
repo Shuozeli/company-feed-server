@@ -13,15 +13,18 @@ use sha2::{Digest, Sha256};
 use crate::ExportError;
 
 pub(super) const SCHEMA_VERSION: &str = "1.0.0";
+const DATA_INDEX_VERSION: &str = "1.0.0";
 const SHARD_MAX_RECORDS: usize = 5_000;
 const SHARD_TARGET_MAX_BYTES: usize = 1024 * 1024;
 const SHARD_MAX_PREFIX_DEPTH: usize = 8;
+const BROWSE_PAGE_SIZE: usize = 50;
 
-pub(super) const OWNED_PATHS: [&str; 14] = [
+pub(super) const OWNED_PATHS: [&str; 15] = [
     ".github",
     "ARCHITECTURE.md",
     "CONTENT_RIGHTS.md",
     "HEAD.json",
+    "index.json",
     "LICENSE.md",
     "README.md",
     "articles",
@@ -34,7 +37,7 @@ pub(super) const OWNED_PATHS: [&str; 14] = [
     "scripts",
 ];
 
-const STATIC_FILES: [(&str, &[u8]); 14] = [
+const STATIC_FILES: &[(&str, &[u8])] = &[
     (
         ".github/workflows/validate.yml",
         include_bytes!("../assets/github/workflows/validate.yml"),
@@ -73,6 +76,10 @@ const STATIC_FILES: [(&str, &[u8]); 14] = [
         include_bytes!("../assets/schemas/v1/company-manifest.schema.json"),
     ),
     (
+        "schemas/v1/data-index.schema.json",
+        include_bytes!("../assets/schemas/v1/data-index.schema.json"),
+    ),
+    (
         "schemas/v1/head.schema.json",
         include_bytes!("../assets/schemas/v1/head.schema.json"),
     ),
@@ -83,6 +90,26 @@ const STATIC_FILES: [(&str, &[u8]); 14] = [
     (
         "schemas/v1/partition-manifest.schema.json",
         include_bytes!("../assets/schemas/v1/partition-manifest.schema.json"),
+    ),
+    (
+        "schemas/v1/article-summary.schema.json",
+        include_bytes!("../assets/schemas/v1/article-summary.schema.json"),
+    ),
+    (
+        "schemas/v1/browse-page.schema.json",
+        include_bytes!("../assets/schemas/v1/browse-page.schema.json"),
+    ),
+    (
+        "schemas/v1/recent-manifest.schema.json",
+        include_bytes!("../assets/schemas/v1/recent-manifest.schema.json"),
+    ),
+    (
+        "schemas/v1/company-directory-manifest.schema.json",
+        include_bytes!("../assets/schemas/v1/company-directory-manifest.schema.json"),
+    ),
+    (
+        "schemas/v1/company-directory-bucket.schema.json",
+        include_bytes!("../assets/schemas/v1/company-directory-bucket.schema.json"),
     ),
     (
         "scripts/validate_archive.py",
@@ -96,8 +123,8 @@ pub(super) fn materialize_archive(
 ) -> Result<Vec<ExportedItem>, ExportError> {
     let projections = project_articles(items)?;
     let mut desired = STATIC_FILES
-        .into_iter()
-        .map(|(path, bytes)| (PathBuf::from(path), bytes.to_vec()))
+        .iter()
+        .map(|(path, bytes)| (PathBuf::from(*path), bytes.to_vec()))
         .collect::<BTreeMap<_, _>>();
 
     let generation = generation_id(&projections)?;
@@ -112,7 +139,7 @@ pub(super) fn materialize_archive(
     let mut index_partitions = BTreeMap::<String, Vec<IndexLine>>::new();
     let mut exported = Vec::with_capacity(projections.len());
 
-    for projection in &projections {
+    for (projection_index, projection) in projections.iter().enumerate() {
         let article = markdown_document(projection);
         let article_bytes = article.into_bytes();
         let article_sha256 = sha256_prefixed(&article_bytes);
@@ -135,7 +162,7 @@ pub(super) fn materialize_archive(
         company_accumulators
             .entry(projection.item.company_key.clone())
             .or_insert_with(|| CompanyAccumulator::new(projection))
-            .record(projection);
+            .record(projection, projection_index);
 
         exported.push(ExportedItem {
             feed_item_id: projection.item.item.id,
@@ -144,12 +171,50 @@ pub(super) fn materialize_archive(
         });
     }
 
+    let mut company_directory = BTreeMap::<String, Vec<CompanyDirectoryEntry>>::new();
     for accumulator in company_accumulators.values() {
+        let mut projection_indexes = accumulator.projection_indexes.clone();
+        sort_projection_indexes_newest_first(&mut projection_indexes, &projections);
+        let pages = materialize_browse_pages(
+            &accumulator.article_index_base(),
+            &projection_indexes,
+            &projections,
+            &generation,
+            &mut desired,
+        )?;
         desired.insert(
             accumulator.manifest_path(),
-            pretty_json(&accumulator.manifest())?,
+            pretty_json(&accumulator.manifest(&generation, pages))?,
         );
+        company_directory
+            .entry(company_directory_bucket(&accumulator.company_name))
+            .or_default()
+            .push(accumulator.directory_entry());
     }
+    let company_directory_manifest_path =
+        materialize_company_directory(&generation, company_directory, &mut desired)?;
+
+    let mut recent_projection_indexes = (0..projections.len()).collect::<Vec<_>>();
+    sort_projection_indexes_newest_first(&mut recent_projection_indexes, &projections);
+    let recent_base = PathBuf::from("index/v1/current/recent");
+    let recent_pages = materialize_browse_pages(
+        &recent_base,
+        &recent_projection_indexes,
+        &projections,
+        &generation,
+        &mut desired,
+    )?;
+    let recent_manifest_path = recent_base.join("manifest.json");
+    let recent_manifest = RecentManifest {
+        schema_version: SCHEMA_VERSION,
+        generation: &generation,
+        sort: "published_at_desc_fetched_at_desc",
+        page_size: BROWSE_PAGE_SIZE,
+        record_count: projections.len(),
+        page_count: recent_pages.len(),
+        pages: recent_pages,
+    };
+    desired.insert(recent_manifest_path.clone(), pretty_json(&recent_manifest)?);
 
     let mut partition_descriptors = Vec::with_capacity(index_partitions.len());
     for (partition, mut lines) in index_partitions {
@@ -222,6 +287,27 @@ pub(super) fn materialize_archive(
         company_count,
     };
     desired.insert(PathBuf::from("HEAD.json"), pretty_json(&head)?);
+    let archive_manifest_path = path_string(&manifest_path)?;
+    let recent_manifest_path_string = path_string(&recent_manifest_path)?;
+    let company_directory_manifest_path_string = path_string(&company_directory_manifest_path)?;
+    let data_index = DataIndex {
+        contract_version: DATA_INDEX_VERSION,
+        dataset: "company-news-data",
+        schema_version: SCHEMA_VERSION,
+        generation: &generation,
+        generated_at: &generated_at,
+        record_count: projections.len(),
+        company_count,
+        paths: DataIndexPaths {
+            head: "HEAD.json",
+            archive_manifest: &archive_manifest_path,
+            recent_manifest: &recent_manifest_path_string,
+            company_directory_manifest: &company_directory_manifest_path_string,
+            openapi: "openapi/openapi.json",
+            content_rights: "CONTENT_RIGHTS.md",
+        },
+    };
+    desired.insert(PathBuf::from("index.json"), pretty_json(&data_index)?);
     desired.insert(
         PathBuf::from("README.md"),
         readme(projections.len(), company_count, &generation).into_bytes(),
@@ -260,6 +346,9 @@ fn project_articles<'a>(
 }
 
 fn document_id(item: &ExportableFeedItem) -> String {
+    // This namespace is part of the durable article identity contract. It
+    // intentionally retains the original repository name after the public
+    // rename so existing document IDs and article paths remain stable.
     sha256_hex(
         format!(
             "company-news-archive/article/v1\0{}\0{}",
@@ -323,6 +412,7 @@ fn is_safe_owned_relative_path(path: &Path) -> bool {
 
 fn generation_id(projections: &[ArticleProjection<'_>]) -> Result<String, ExportError> {
     let mut hasher = Sha256::new();
+    // Keep the original namespace stable for deterministic generations.
     hasher.update(format!(
         "company-news-archive/generation/{SCHEMA_VERSION}\0"
     ));
@@ -400,6 +490,145 @@ fn index_document<'a>(projection: &'a ArticleProjection<'a>) -> IndexDocument<'a
         article_path: path_string_lossless(&projection.article_path),
         record_path: path_string_lossless(&projection.record_path),
     }
+}
+
+fn article_summary<'a>(projection: &'a ArticleProjection<'a>) -> ArticleSummary<'a> {
+    let item = &projection.item.item;
+    ArticleSummary {
+        schema_version: SCHEMA_VERSION,
+        document_id: &projection.document_id,
+        company_key: &projection.item.company_key,
+        company_name: &projection.item.company_name,
+        source_id: &projection.item.source_key,
+        source_kind: item.source_kind.to_string(),
+        canonical_url: item.canonical_url.as_str(),
+        title: &item.title,
+        summary: &item.summary,
+        published_at: item.published_at.map(|value| value.to_rfc3339()),
+        fetched_at: item.fetched_at.to_rfc3339(),
+        article_path: path_string_lossless(&projection.article_path),
+        record_path: path_string_lossless(&projection.record_path),
+    }
+}
+
+fn effective_article_timestamp(projection: &ArticleProjection<'_>) -> DateTime<Utc> {
+    projection
+        .item
+        .item
+        .published_at
+        .unwrap_or(projection.item.item.fetched_at)
+}
+
+fn sort_projection_indexes_newest_first(
+    indexes: &mut [usize],
+    projections: &[ArticleProjection<'_>],
+) {
+    indexes.sort_by(|left, right| {
+        let left = &projections[*left];
+        let right = &projections[*right];
+        effective_article_timestamp(right)
+            .cmp(&effective_article_timestamp(left))
+            .then_with(|| right.item.item.fetched_at.cmp(&left.item.item.fetched_at))
+            .then_with(|| left.document_id.cmp(&right.document_id))
+    });
+}
+
+fn materialize_browse_pages(
+    base: &Path,
+    projection_indexes: &[usize],
+    projections: &[ArticleProjection<'_>],
+    generation: &str,
+    desired: &mut BTreeMap<PathBuf, Vec<u8>>,
+) -> Result<Vec<PageDescriptor>, ExportError> {
+    let mut pages = Vec::new();
+    for (page_index, chunk) in projection_indexes.chunks(BROWSE_PAGE_SIZE).enumerate() {
+        let page_number = page_index + 1;
+        let path = base.join("pages").join(format!("{page_number:06}.json"));
+        let page = BrowsePage {
+            schema_version: SCHEMA_VERSION,
+            generation,
+            page: page_number,
+            record_count: chunk.len(),
+            items: chunk
+                .iter()
+                .map(|index| article_summary(&projections[*index]))
+                .collect(),
+        };
+        let bytes = pretty_json(&page)?;
+        let newest_at = chunk
+            .first()
+            .map(|index| effective_article_timestamp(&projections[*index]).to_rfc3339());
+        let oldest_at = chunk
+            .last()
+            .map(|index| effective_article_timestamp(&projections[*index]).to_rfc3339());
+        pages.push(PageDescriptor {
+            page: page_number,
+            path: path_string(&path)?,
+            record_count: chunk.len(),
+            byte_count: bytes.len(),
+            sha256: sha256_prefixed(&bytes),
+            newest_at,
+            oldest_at,
+        });
+        desired.insert(path, bytes);
+    }
+    Ok(pages)
+}
+
+fn company_directory_bucket(company_name: &str) -> String {
+    match company_name.trim_start().chars().next() {
+        Some(character) if character.is_ascii_alphabetic() => {
+            character.to_ascii_lowercase().to_string()
+        }
+        Some(character) if character.is_ascii_digit() => "0-9".to_owned(),
+        _ => "other".to_owned(),
+    }
+}
+
+fn materialize_company_directory(
+    generation: &str,
+    mut buckets: BTreeMap<String, Vec<CompanyDirectoryEntry>>,
+    desired: &mut BTreeMap<PathBuf, Vec<u8>>,
+) -> Result<PathBuf, ExportError> {
+    let base = PathBuf::from("index/v1/current/companies");
+    let mut descriptors = Vec::with_capacity(buckets.len());
+    let mut company_count = 0;
+    for (bucket, entries) in &mut buckets {
+        entries.sort_by(|left, right| {
+            left.company_name
+                .to_lowercase()
+                .cmp(&right.company_name.to_lowercase())
+                .then_with(|| left.company_key.cmp(&right.company_key))
+        });
+        company_count += entries.len();
+        let path = base.join("buckets").join(format!("{bucket}.json"));
+        let page = CompanyDirectoryBucket {
+            schema_version: SCHEMA_VERSION,
+            generation,
+            bucket,
+            company_count: entries.len(),
+            companies: entries,
+        };
+        let bytes = pretty_json(&page)?;
+        descriptors.push(CompanyDirectoryBucketDescriptor {
+            bucket: bucket.clone(),
+            path: path_string(&path)?,
+            company_count: entries.len(),
+            byte_count: bytes.len(),
+            sha256: sha256_prefixed(&bytes),
+        });
+        desired.insert(path, bytes);
+    }
+    let manifest_path = base.join("manifest.json");
+    let manifest = CompanyDirectoryManifest {
+        schema_version: SCHEMA_VERSION,
+        generation,
+        company_count,
+        bucket_count: descriptors.len(),
+        buckets: descriptors,
+    };
+    desired.insert(manifest_path.clone(), pretty_json(&manifest)?);
+    Ok(manifest_path)
 }
 
 fn markdown_document(projection: &ArticleProjection<'_>) -> String {
@@ -579,14 +808,16 @@ fn sha256_prefixed(bytes: &[u8]) -> String {
 
 fn readme(record_count: usize, company_count: usize, generation: &str) -> String {
     format!(
-        "# Company News Archive\n\n\
+        "# Company News Data\n\n\
 Version-controlled company news records generated by \
 [company-feed-server](https://github.com/Shuozeli/company-feed-server).\n\n\
 Current snapshot: **{record_count} records** across **{company_count} companies**.  \n\
 Generation: `{generation}`\n\n\
-Start with [`HEAD.json`](HEAD.json), then follow its root manifest to bounded \
-JSONL shards. Browse readable articles under [`articles/v1/`](articles/v1/) \
-and the machine contract under [`schemas/v1/`](schemas/v1/).\n\n\
+Start with [`index.json`](index.json) for lazy UI navigation or [`HEAD.json`](HEAD.json) \
+for the canonical archive checkpoint. Full-text JSONL shards live under \
+[`index/v1/current/`](index/v1/current/), readable articles under \
+[`articles/v1/`](articles/v1/), and machine contracts under \
+[`schemas/v1/`](schemas/v1/).\n\n\
 - [`ARCHITECTURE.md`](ARCHITECTURE.md) explains identity, trees, shards, and compatibility.\n\
 - [`openapi/openapi.json`](openapi/openapi.json) defines the OpenAPI 3.1 read contract.\n\
 - [`CONTENT_RIGHTS.md`](CONTENT_RIGHTS.md) explains provenance and third-party rights.\n\
@@ -615,6 +846,7 @@ struct CompanyAccumulator {
     first_published_at: Option<DateTime<Utc>>,
     last_published_at: Option<DateTime<Utc>>,
     partitions: BTreeMap<String, usize>,
+    projection_indexes: Vec<usize>,
 }
 
 impl CompanyAccumulator {
@@ -626,11 +858,13 @@ impl CompanyAccumulator {
             first_published_at: None,
             last_published_at: None,
             partitions: BTreeMap::new(),
+            projection_indexes: Vec::new(),
         }
     }
 
-    fn record(&mut self, projection: &ArticleProjection<'_>) {
+    fn record(&mut self, projection: &ArticleProjection<'_>, projection_index: usize) {
         self.record_count += 1;
+        self.projection_indexes.push(projection_index);
         *self
             .partitions
             .entry(projection.archive_month.clone())
@@ -655,7 +889,18 @@ impl CompanyAccumulator {
             .join("company.json")
     }
 
-    fn manifest(&self) -> CompanyManifest<'_> {
+    fn article_index_base(&self) -> PathBuf {
+        self.manifest_path()
+            .parent()
+            .expect("company manifest has a parent")
+            .join("index")
+    }
+
+    fn manifest<'a>(
+        &'a self,
+        generation: &'a str,
+        pages: Vec<PageDescriptor>,
+    ) -> CompanyManifest<'a> {
         CompanyManifest {
             schema_version: SCHEMA_VERSION,
             company: CompanyRef {
@@ -673,6 +918,24 @@ impl CompanyAccumulator {
                     record_count: *record_count,
                 })
                 .collect(),
+            article_index: CompanyArticleIndex {
+                generation,
+                sort: "published_at_desc_fetched_at_desc",
+                page_size: BROWSE_PAGE_SIZE,
+                page_count: pages.len(),
+                pages,
+            },
+        }
+    }
+
+    fn directory_entry(&self) -> CompanyDirectoryEntry {
+        CompanyDirectoryEntry {
+            company_key: self.company_key.clone(),
+            company_name: self.company_name.clone(),
+            record_count: self.record_count,
+            first_published_at: self.first_published_at.map(|value| value.to_rfc3339()),
+            last_published_at: self.last_published_at.map(|value| value.to_rfc3339()),
+            company_manifest_path: path_string_lossless(&self.manifest_path()).to_owned(),
         }
     }
 }
@@ -756,6 +1019,43 @@ struct IndexDocument<'a> {
 }
 
 #[derive(Serialize)]
+struct ArticleSummary<'a> {
+    schema_version: &'a str,
+    document_id: &'a str,
+    company_key: &'a str,
+    company_name: &'a str,
+    source_id: &'a str,
+    source_kind: String,
+    canonical_url: &'a str,
+    title: &'a str,
+    summary: &'a str,
+    published_at: Option<String>,
+    fetched_at: String,
+    article_path: &'a str,
+    record_path: &'a str,
+}
+
+#[derive(Serialize)]
+struct BrowsePage<'a> {
+    schema_version: &'a str,
+    generation: &'a str,
+    page: usize,
+    record_count: usize,
+    items: Vec<ArticleSummary<'a>>,
+}
+
+#[derive(Serialize)]
+struct PageDescriptor {
+    page: usize,
+    path: String,
+    record_count: usize,
+    byte_count: usize,
+    sha256: String,
+    newest_at: Option<String>,
+    oldest_at: Option<String>,
+}
+
+#[derive(Serialize)]
 struct CompanyPartition<'a> {
     partition: &'a str,
     record_count: usize,
@@ -769,6 +1069,53 @@ struct CompanyManifest<'a> {
     first_published_at: Option<String>,
     last_published_at: Option<String>,
     partitions: Vec<CompanyPartition<'a>>,
+    article_index: CompanyArticleIndex<'a>,
+}
+
+#[derive(Serialize)]
+struct CompanyArticleIndex<'a> {
+    generation: &'a str,
+    sort: &'a str,
+    page_size: usize,
+    page_count: usize,
+    pages: Vec<PageDescriptor>,
+}
+
+#[derive(Serialize)]
+struct CompanyDirectoryEntry {
+    company_key: String,
+    company_name: String,
+    record_count: usize,
+    first_published_at: Option<String>,
+    last_published_at: Option<String>,
+    company_manifest_path: String,
+}
+
+#[derive(Serialize)]
+struct CompanyDirectoryBucket<'a> {
+    schema_version: &'a str,
+    generation: &'a str,
+    bucket: &'a str,
+    company_count: usize,
+    companies: &'a [CompanyDirectoryEntry],
+}
+
+#[derive(Serialize)]
+struct CompanyDirectoryBucketDescriptor {
+    bucket: String,
+    path: String,
+    company_count: usize,
+    byte_count: usize,
+    sha256: String,
+}
+
+#[derive(Serialize)]
+struct CompanyDirectoryManifest<'a> {
+    schema_version: &'a str,
+    generation: &'a str,
+    company_count: usize,
+    bucket_count: usize,
+    buckets: Vec<CompanyDirectoryBucketDescriptor>,
 }
 
 #[derive(Serialize)]
@@ -833,6 +1180,39 @@ struct ArchiveHead<'a> {
     manifest_path: &'a str,
     record_count: usize,
     company_count: usize,
+}
+
+#[derive(Serialize)]
+struct RecentManifest<'a> {
+    schema_version: &'a str,
+    generation: &'a str,
+    sort: &'a str,
+    page_size: usize,
+    record_count: usize,
+    page_count: usize,
+    pages: Vec<PageDescriptor>,
+}
+
+#[derive(Serialize)]
+struct DataIndexPaths<'a> {
+    head: &'a str,
+    archive_manifest: &'a str,
+    recent_manifest: &'a str,
+    company_directory_manifest: &'a str,
+    openapi: &'a str,
+    content_rights: &'a str,
+}
+
+#[derive(Serialize)]
+struct DataIndex<'a> {
+    contract_version: &'a str,
+    dataset: &'a str,
+    schema_version: &'a str,
+    generation: &'a str,
+    generated_at: &'a str,
+    record_count: usize,
+    company_count: usize,
+    paths: DataIndexPaths<'a>,
 }
 
 #[cfg(test)]

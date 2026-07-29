@@ -210,7 +210,7 @@ pub enum ExportError {
 
 #[cfg(test)]
 mod tests {
-    use chrono::TimeZone;
+    use chrono::{Duration, TimeZone};
     use feed_core::{ExportFormat, ExportLayout, FeedItem, SourceKind};
     use serde_json::json;
     use tempfile::TempDir;
@@ -290,10 +290,23 @@ mod tests {
                 .is_file()
         );
         assert!(target.local_path.join("HEAD.json").is_file());
+        assert!(target.local_path.join("index.json").is_file());
         assert!(
             target
                 .local_path
                 .join("index/v1/current/manifest.json")
+                .is_file()
+        );
+        assert!(
+            target
+                .local_path
+                .join("index/v1/current/recent/manifest.json")
+                .is_file()
+        );
+        assert!(
+            target
+                .local_path
+                .join("index/v1/current/companies/manifest.json")
                 .is_file()
         );
         assert!(
@@ -331,11 +344,67 @@ mod tests {
         assert!(result.commit_sha.is_some());
         assert!(result.records.is_empty());
         assert!(target.local_path.join("HEAD.json").is_file());
+        assert!(target.local_path.join("index.json").is_file());
         assert!(
             target
                 .local_path
                 .join("index/v1/current/manifest.json")
                 .is_file()
+        );
+    }
+
+    #[tokio::test]
+    async fn emits_bounded_navigation_pages_without_article_bodies() {
+        let temporary = TempDir::new().expect("temporary directory");
+        let (target, seed) = fixture(temporary.path());
+        let seed = seed.first().expect("fixture item");
+        let items = (0..51)
+            .map(|index| {
+                let mut item = seed.clone();
+                let url =
+                    Url::parse(&format!("https://example.com/post-{index}")).expect("valid URL");
+                item.item.id = Uuid::new_v4();
+                item.item.external_id = format!("post-{index}");
+                item.item.url = url.clone();
+                item.item.canonical_url = url;
+                item.item.title = format!("Article {index}");
+                item.item.published_at = item
+                    .item
+                    .published_at
+                    .map(|value| value + Duration::seconds(index));
+                item
+            })
+            .collect::<Vec<_>>();
+
+        export_archive(target.clone(), items)
+            .await
+            .expect("paged export");
+
+        let recent: serde_json::Value = serde_json::from_slice(
+            &fs::read(
+                target
+                    .local_path
+                    .join("index/v1/current/recent/manifest.json"),
+            )
+            .expect("recent manifest"),
+        )
+        .expect("valid recent manifest");
+        assert_eq!(recent["page_count"], 2);
+        assert_eq!(recent["pages"][0]["record_count"], 50);
+        assert_eq!(recent["pages"][1]["record_count"], 1);
+
+        let first_page_path = recent["pages"][0]["path"].as_str().expect("page path");
+        let first_page: serde_json::Value = serde_json::from_slice(
+            &fs::read(target.local_path.join(first_page_path)).expect("first page"),
+        )
+        .expect("valid first page");
+        assert_eq!(first_page["items"].as_array().map(Vec::len), Some(50));
+        assert!(
+            first_page["items"]
+                .as_array()
+                .expect("page items")
+                .iter()
+                .all(|item| item.get("body_text").is_none())
         );
     }
 }
