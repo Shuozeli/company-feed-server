@@ -351,6 +351,8 @@ pub struct ExportableFeedItem {
     pub item: FeedItem,
     pub company_key: String,
     pub company_name: String,
+    pub company_category_key: String,
+    pub company_category_name: String,
     pub source_key: String,
     pub previous_exported_path: Option<PathBuf>,
     pub previous_content_hash: Option<String>,

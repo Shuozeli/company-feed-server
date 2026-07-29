@@ -6,7 +6,9 @@ use feed_core::{
     FeedItem, RunStatus, SourceKind,
 };
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use sqlx::FromRow;
+use unicode_normalization::{UnicodeNormalization, char::is_combining_mark};
 use url::Url;
 use uuid::Uuid;
 
@@ -106,6 +108,7 @@ struct ExportableFeedItemRow {
     updated_at: DateTime<Utc>,
     company_key: String,
     company_name: String,
+    company_category_name: Option<String>,
     source_key: String,
     previous_exported_path: Option<String>,
     previous_content_hash: Option<String>,
@@ -113,6 +116,8 @@ struct ExportableFeedItemRow {
 
 impl ExportableFeedItemRow {
     fn into_domain(self) -> Result<ExportableFeedItem, DatabaseError> {
+        let (company_category_key, company_category_name) =
+            normalized_company_category(self.company_category_name.as_deref());
         Ok(ExportableFeedItem {
             item: FeedItem {
                 id: self.id,
@@ -136,11 +141,48 @@ impl ExportableFeedItemRow {
             },
             company_key: self.company_key,
             company_name: self.company_name,
+            company_category_key,
+            company_category_name,
             source_key: self.source_key,
             previous_exported_path: self.previous_exported_path.map(PathBuf::from),
             previous_content_hash: self.previous_content_hash,
         })
     }
+}
+
+fn normalized_company_category(sector: Option<&str>) -> (String, String) {
+    const KEY_MAX_BYTES: usize = 64;
+    const DIGEST_HEX_BYTES: usize = 16;
+    const SLUG_MAX_BYTES: usize = KEY_MAX_BYTES - DIGEST_HEX_BYTES - 1;
+
+    let normalized = sector.unwrap_or_default().nfc().collect::<String>();
+    let name = normalized.split_whitespace().collect::<Vec<_>>().join(" ");
+    if name.is_empty() {
+        return ("uncategorized".to_owned(), "Uncategorized".to_owned());
+    }
+    let mut slug = String::with_capacity(name.len().min(SLUG_MAX_BYTES));
+    let mut pending_separator = false;
+    for character in name.nfd() {
+        if character.is_ascii_alphanumeric() {
+            if pending_separator && !slug.is_empty() {
+                slug.push('-');
+            }
+            slug.push(character.to_ascii_lowercase());
+            pending_separator = false;
+        } else if !is_combining_mark(character) {
+            pending_separator = true;
+        }
+    }
+    if slug.is_empty() {
+        slug.push_str("category");
+    }
+    slug.truncate(SLUG_MAX_BYTES);
+    while slug.ends_with('-') {
+        slug.pop();
+    }
+    let digest = Sha256::digest(name.as_bytes());
+    let suffix = &hex::encode(digest)[..DIGEST_HEX_BYTES];
+    (format!("{slug}-{suffix}"), name)
 }
 
 impl Database {
@@ -434,6 +476,8 @@ impl Database {
                 item.updated_at,
                 company.company_key AS company_key,
                 company.name AS company_name,
+                company.metadata #>> '{universe,sector}'
+                    AS company_category_name,
                 source.source_id AS source_key,
                 exported.exported_path AS previous_exported_path,
                 exported.exported_content_hash AS previous_content_hash
@@ -632,5 +676,63 @@ impl Database {
         .bind(export_target_id)
         .fetch_one(self.pool())
         .await?)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalized_company_category;
+
+    #[test]
+    fn normalizes_universe_sectors_for_static_category_paths() {
+        let (key, name) = normalized_company_category(Some("  Consumer   Cyclical  "));
+        assert_eq!(name, "Consumer Cyclical");
+        assert!(key.starts_with("consumer-cyclical-"));
+        assert_eq!(key.len(), "consumer-cyclical-".len() + 16);
+
+        let (key, name) = normalized_company_category(Some("Health Care / Services"));
+        assert_eq!(name, "Health Care / Services");
+        assert!(key.starts_with("health-care-services-"));
+    }
+
+    #[test]
+    fn only_missing_sectors_use_the_reserved_uncategorized_key() {
+        for sector in [None, Some(""), Some("   ")] {
+            assert_eq!(
+                normalized_company_category(sector),
+                ("uncategorized".to_owned(), "Uncategorized".to_owned())
+            );
+        }
+        let (key, name) = normalized_company_category(Some("Uncategorized"));
+        assert_eq!(name, "Uncategorized");
+        assert_ne!(key, "uncategorized");
+    }
+
+    #[test]
+    fn unicode_categories_are_preserved_and_normalized_deterministically() {
+        let decomposed = normalized_company_category(Some("  Cafe\u{301}   医疗 "));
+        let composed = normalized_company_category(Some("Café 医疗"));
+        assert_eq!(decomposed, composed);
+        assert_eq!(composed.1, "Café 医疗");
+        assert!(composed.0.starts_with("cafe-"));
+
+        let (key, name) = normalized_company_category(Some("医疗 保健"));
+        assert_eq!(name, "医疗 保健");
+        assert!(key.starts_with("category-"));
+        assert_ne!(key, "uncategorized");
+    }
+
+    #[test]
+    fn slug_collisions_get_distinct_bounded_keys() {
+        let spaced = normalized_company_category(Some("Health Care"));
+        let dashed = normalized_company_category(Some("Health-Care"));
+        assert!(spaced.0.starts_with("health-care-"));
+        assert!(dashed.0.starts_with("health-care-"));
+        assert_ne!(spaced.0, dashed.0);
+
+        let long_name = "A".repeat(512);
+        let (key, name) = normalized_company_category(Some(&long_name));
+        assert_eq!(key.len(), 64);
+        assert_eq!(name, long_name);
     }
 }

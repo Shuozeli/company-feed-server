@@ -14,10 +14,13 @@ postgres-tests = []
 chrono.workspace = true
 feed-core.workspace = true
 feed-universe.workspace = true
+hex.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 sqlx.workspace = true
 thiserror.workspace = true
+unicode-normalization.workspace = true
 uuid.workspace = true
 url.workspace = true
 

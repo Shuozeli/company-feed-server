@@ -16,6 +16,9 @@ index/v1/current/
   companies/
     manifest.json
     buckets/<letter>.json
+  categories/
+    manifest.json
+    <category-key>/pages/<page>.json
   partitions/<year>/<month>/
     manifest.json
     shards/<hash-prefix>.jsonl
@@ -57,12 +60,26 @@ final newline. Shards are snapshots; Git commits provide the change log.
 
 - newest-first article-summary pages;
 - an alphabetical company directory split into 37 bounded buckets;
+- a category manifest with bounded 100-company pages per universe sector;
 - the canonical full-text archive manifest.
 
 Article-summary pages contain metadata and paths only. A browser fetches an
 individual `record.json` and `article.md` after the reader selects an article.
 Full `body_text` remains in the JSONL shards for downstream indexing, but is
 never duplicated into browser navigation pages.
+
+Category names come from `companies.metadata.universe.sector`. Display names
+are NFC-normalized with surrounding and repeated whitespace removed. Missing
+sector values are published under `Uncategorized` with the reserved key
+`uncategorized`. Other keys use a bounded readable ASCII slug plus a stable
+SHA-256 suffix, so Unicode and punctuation-heavy labels remain path-safe and
+slug collisions do not merge categories.
+
+`index.json`, category manifests, and category pages carry both the dataset
+`generation` and a deterministic `taxonomy_generation`. The latter changes
+when a company moves between categories even when every article remains
+unchanged. `HEAD.json` remains the schema-`1.0.0` article archive checkpoint;
+taxonomy-aware browsers use the versioned `index.json` bootstrap.
 
 ## Checkpoints
 
@@ -81,6 +98,10 @@ Paths under `v1` follow semantic compatibility:
 
 Interactive consumers should start at `index.json`; bulk consumers may start
 at `HEAD.json`. Both should verify referenced hashes and ignore unknown fields.
+The browser bootstrap contract is version `1.1.0` because category navigation
+and the required taxonomy checkpoint were added. Per-document
+`schema_version` remains `1.0.0`, preserving article identity, paths, summary
+formats, and the article dataset generation.
 
 ## Repository scale boundary
 

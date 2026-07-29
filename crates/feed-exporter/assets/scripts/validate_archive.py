@@ -69,6 +69,22 @@ def directory_bucket(company_name: str) -> str:
     return "other"
 
 
+def taxonomy_generation(
+    assignments: dict[str, tuple[str, str]],
+) -> str:
+    digest = hashlib.sha256()
+    digest.update(b"company-news-data/taxonomy/v1\0")
+    for company_key in sorted(assignments):
+        category_key, category_name = assignments[company_key]
+        digest.update(company_key.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(category_key.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(category_name.encode("utf-8"))
+        digest.update(b"\n")
+    return digest.hexdigest()
+
+
 def article_sort_key(item: dict[str, Any]) -> tuple[datetime, datetime, str]:
     published = item["published_at"] or item["fetched_at"]
     return (
@@ -159,10 +175,14 @@ def main() -> None:
     openapi = load_json(ROOT / "openapi/openapi.json")
     if openapi.get("openapi") != "3.1.2":
         raise ValueError("openapi/openapi.json: expected OpenAPI 3.1.2")
+    if openapi.get("info", {}).get("version") != "1.1.0":
+        raise ValueError("openapi/openapi.json: expected contract version 1.1.0")
 
     data_index = load_json(ROOT / "index.json")
     if data_index["dataset"] != "company-news-data":
         raise ValueError("index.json: unexpected dataset")
+    if data_index["contract_version"] != "1.1.0":
+        raise ValueError("index.json: unexpected contract version")
     head = load_json(resolve(data_index["paths"]["head"]))
     manifest = load_json(resolve(data_index["paths"]["archive_manifest"]))
     if head["manifest_path"] != data_index["paths"]["archive_manifest"]:
@@ -318,6 +338,144 @@ def main() -> None:
 
     if set(directory_entries) != companies:
         raise ValueError("company directory does not cover every company")
+
+    category_directory = load_json(
+        resolve(data_index["paths"]["category_directory_manifest"])
+    )
+    if category_directory["generation"] != head["generation"]:
+        raise ValueError("category directory dataset generation mismatch")
+    if (
+        category_directory["taxonomy_generation"]
+        != data_index["taxonomy_generation"]
+    ):
+        raise ValueError("index and category taxonomy generations differ")
+    if category_directory["company_count"] != len(companies):
+        raise ValueError("category directory company count mismatch")
+    if category_directory["record_count"] != total_records:
+        raise ValueError("category directory record count mismatch")
+    if category_directory["category_count"] != len(
+        category_directory["categories"]
+    ):
+        raise ValueError("category directory category count mismatch")
+    if category_directory["page_size"] != 100:
+        raise ValueError("category directory page size mismatch")
+
+    category_companies: set[str] = set()
+    category_assignments: dict[str, tuple[str, str]] = {}
+    category_records = 0
+    previous_category_key = ""
+    for descriptor in category_directory["categories"]:
+        category_key = descriptor["key"]
+        category_name = descriptor["name"]
+        if not category_key.isascii() or len(category_key) > 64:
+            raise ValueError(f"{category_key}: category key is unbounded")
+        if category_key != "uncategorized":
+            _, separator, digest = category_key.rpartition("-")
+            if (
+                not separator
+                or len(digest) != 16
+                or any(character not in "0123456789abcdef" for character in digest)
+            ):
+                raise ValueError(f"{category_key}: invalid category digest suffix")
+        if category_key <= previous_category_key:
+            raise ValueError("category directory entries are not sorted")
+        previous_category_key = category_key
+        if descriptor["page_count"] != len(descriptor["pages"]):
+            raise ValueError(f"{category_key}: category page count mismatch")
+        descriptor_company_count = 0
+        descriptor_record_count = 0
+        previous_name = ""
+        for expected_page, page_descriptor in enumerate(
+            descriptor["pages"], start=1
+        ):
+            if page_descriptor["page"] != expected_page:
+                raise ValueError(
+                    f"{category_key}: category pages are not contiguous"
+                )
+            page_path = resolve(page_descriptor["path"])
+            expected_path = (
+                f"index/v1/current/categories/{category_key}/pages/"
+                f"{expected_page:06}.json"
+            )
+            if page_descriptor["path"] != expected_path:
+                raise ValueError(f"{page_path}: category page path mismatch")
+            page_bytes = page_path.read_bytes()
+            if len(page_bytes) != page_descriptor["byte_count"]:
+                raise ValueError(f"{page_path}: byte count mismatch")
+            if sha256_bytes(page_bytes) != page_descriptor["sha256"]:
+                raise ValueError(f"{page_path}: digest mismatch")
+            page = json.loads(page_bytes)
+            if (
+                page["generation"] != head["generation"]
+                or page["taxonomy_generation"]
+                != category_directory["taxonomy_generation"]
+                or page["key"] != category_key
+                or page["name"] != category_name
+                or page["page"] != expected_page
+            ):
+                raise ValueError(f"{page_path}: category identity mismatch")
+            if page["company_count"] != len(page["companies"]):
+                raise ValueError(f"{page_path}: company count mismatch")
+            if page["company_count"] > category_directory["page_size"]:
+                raise ValueError(f"{page_path}: category page is unbounded")
+            if page["company_count"] != page_descriptor["company_count"]:
+                raise ValueError(
+                    f"{page_path}: descriptor company count mismatch"
+                )
+            page_record_count = sum(
+                entry["record_count"] for entry in page["companies"]
+            )
+            if page_record_count != page["record_count"]:
+                raise ValueError(f"{page_path}: record count mismatch")
+            if page["record_count"] != page_descriptor["record_count"]:
+                raise ValueError(
+                    f"{page_path}: descriptor record count mismatch"
+                )
+            descriptor_company_count += page["company_count"]
+            descriptor_record_count += page_record_count
+            category_records += page_record_count
+            for entry in page["companies"]:
+                company_key = entry["company_key"]
+                if company_key in category_companies:
+                    raise ValueError(
+                        f"duplicate categorized company: {company_key}"
+                    )
+                if entry != directory_entries.get(company_key):
+                    raise ValueError(
+                        f"{page_path}: company directory entry mismatch"
+                    )
+                normalized_name = entry["company_name"].lower()
+                if normalized_name < previous_name:
+                    raise ValueError(
+                        f"{page_path}: companies are not sorted"
+                    )
+                previous_name = normalized_name
+                category_companies.add(company_key)
+                category_assignments[company_key] = (
+                    category_key,
+                    category_name,
+                )
+        if descriptor_company_count != descriptor["company_count"]:
+            raise ValueError(
+                f"{category_key}: category company count mismatch"
+            )
+        if descriptor_record_count != descriptor["record_count"]:
+            raise ValueError(
+                f"{category_key}: category record count mismatch"
+            )
+
+    if category_companies != companies:
+        raise ValueError("category directory does not cover every company")
+    if category_records != total_records:
+        raise ValueError("category pages do not cover every record")
+    expected_taxonomy_generation = taxonomy_generation(category_assignments)
+    if (
+        category_directory["taxonomy_generation"]
+        != expected_taxonomy_generation
+    ):
+        raise ValueError("category directory taxonomy generation mismatch")
+    if data_index["taxonomy_generation"] != expected_taxonomy_generation:
+        raise ValueError("index.json taxonomy generation mismatch")
 
     for company_key in companies:
         company_path = (

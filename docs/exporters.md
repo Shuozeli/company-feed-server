@@ -45,6 +45,9 @@ company-news-data/
     companies/
       manifest.json
       buckets/<letter>.json
+    categories/
+      manifest.json
+      <category-key>/pages/<page>.json
     partitions/<year>/<month>/
       manifest.json
       shards/
@@ -106,9 +109,22 @@ The index first partitions records by archival month. Each partition starts as
 UTF-8, sorted by document ID, compact, and newline terminated.
 
 `index.json` is the small browser bootstrap. It points to bounded newest-first
-summary pages and an alphabetical company directory. Article bodies are loaded
-only after selection, while bulk consumers continue to use full-text JSONL
-shards.
+summary pages, an alphabetical company directory, and a category directory.
+Each category exposes lazily loaded pages capped at 100 of the same compact
+company-directory rows. Category names derive from
+`companies.metadata.universe.sector`, are NFC-normalized, and collapse
+whitespace. An absent sector falls back to `Uncategorized`
+(`uncategorized`). Other category keys combine a bounded readable ASCII slug
+with a stable SHA-256 suffix, preserving arbitrary Unicode display names while
+preventing slug collisions. Article bodies are loaded only after selection,
+while bulk consumers continue to use full-text JSONL shards.
+
+`index.json`, category manifests, and category pages carry the article dataset
+`generation` plus a separate deterministic `taxonomy_generation`. Moving a
+company between categories therefore invalidates taxonomy caches without
+changing article document IDs, paths, summaries, or the dataset generation.
+`HEAD.json` remains the schema-`1.0.0` bulk article checkpoint; taxonomy-aware
+clients bootstrap through `index.json`.
 
 `HEAD.json` points to the current root manifest. The root references monthly
 partition manifests, which reference leaf shards with:
@@ -129,6 +145,11 @@ Canonical file contracts use JSON Schema Draft 2020-12 under `schemas/v1/`.
 The OpenAPI 3.1.2 document under `openapi/` references those schemas rather than
 maintaining a second model. It describes both the static Git paths and
 compatible read-only HTTP adapters.
+
+The bootstrap `contract_version` and OpenAPI contract are `1.1.0` because the
+required taxonomy checkpoint and category navigation are additive bootstrap
+capabilities. Article and summary documents retain `schema_version: 1.0.0`;
+the change does not rewrite their identity or dataset generation.
 
 Run `python3 scripts/validate_archive.py` inside a generated repository to
 verify schema/OpenAPI JSON parsing, manifest and content hashes, counts, shard

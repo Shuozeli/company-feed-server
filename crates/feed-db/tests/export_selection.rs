@@ -21,14 +21,15 @@ async fn approved_public_export_scope_deduplicates_and_prefers_hydrated_content(
         r#"
         INSERT INTO companies (
             company_key, name, ownership_status, lifecycle_status,
-            discovery_cadence_seconds
+            discovery_cadence_seconds, metadata
         )
-        VALUES ($1, $2, 'private', 'active', 3600)
+        VALUES ($1, $2, 'private', 'active', 3600, $3)
         RETURNING id
         "#,
     )
     .bind(format!("export-selection-{}", &suffix[..12]))
     .bind(format!("Export Selection Fixture {suffix}"))
+    .bind(json!({"universe": {"sector": "Consumer Cyclical"}}))
     .fetch_one(database.pool())
     .await
     .expect("insert fixture company");
@@ -151,6 +152,12 @@ async fn approved_public_export_scope_deduplicates_and_prefers_hydrated_content(
     assert_eq!(selected.len(), 1);
     assert_eq!(selected[0].item.id, second_item);
     assert_eq!(selected[0].item.body_text, hydrated_body);
+    assert!(
+        selected[0]
+            .company_category_key
+            .starts_with("consumer-cyclical-")
+    );
+    assert_eq!(selected[0].company_category_name, "Consumer Cyclical");
     assert_ne!(selected[0].item.id, first_item);
 
     let explicit = database

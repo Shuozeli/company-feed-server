@@ -265,6 +265,8 @@ mod tests {
                 },
                 company_key: "acme".to_owned(),
                 company_name: "Acme Corp".to_owned(),
+                company_category_key: "technology-3169ce6442acdc81".to_owned(),
+                company_category_name: "Technology".to_owned(),
                 source_key: "acme-news".to_owned(),
                 previous_exported_path: None,
                 previous_content_hash: None,
@@ -312,6 +314,46 @@ mod tests {
         assert!(
             target
                 .local_path
+                .join("index/v1/current/categories/manifest.json")
+                .is_file()
+        );
+        let data_index: serde_json::Value = serde_json::from_slice(
+            &fs::read(target.local_path.join("index.json")).expect("data index"),
+        )
+        .expect("valid data index");
+        assert_eq!(
+            data_index["paths"]["category_directory_manifest"],
+            "index/v1/current/categories/manifest.json"
+        );
+        assert_eq!(data_index["contract_version"], "1.1.0");
+        let category_manifest: serde_json::Value = serde_json::from_slice(
+            &fs::read(
+                target
+                    .local_path
+                    .join("index/v1/current/categories/manifest.json"),
+            )
+            .expect("category manifest"),
+        )
+        .expect("valid category manifest");
+        assert_eq!(
+            data_index["taxonomy_generation"],
+            category_manifest["taxonomy_generation"]
+        );
+        assert_eq!(category_manifest["category_count"], 1);
+        assert_eq!(
+            category_manifest["categories"][0]["key"],
+            "technology-3169ce6442acdc81"
+        );
+        assert_eq!(category_manifest["categories"][0]["company_count"], 1);
+        assert_eq!(category_manifest["categories"][0]["record_count"], 1);
+        assert_eq!(category_manifest["categories"][0]["page_count"], 1);
+        assert_eq!(
+            category_manifest["categories"][0]["pages"][0]["company_count"],
+            1
+        );
+        assert!(
+            target
+                .local_path
                 .join(&first.records[0].exported_path)
                 .with_file_name("record.json")
                 .is_file()
@@ -330,6 +372,145 @@ mod tests {
         let second = export_archive(target, items).await.expect("second export");
         assert!(!second.changed);
         assert_eq!(second.commit_sha, first.commit_sha);
+    }
+
+    #[tokio::test]
+    async fn taxonomy_changes_do_not_change_article_generation() {
+        let temporary = TempDir::new().expect("temporary directory");
+        let (target, mut items) = fixture(temporary.path());
+
+        export_archive(target.clone(), items.clone())
+            .await
+            .expect("first export");
+        let first_head: serde_json::Value = serde_json::from_slice(
+            &fs::read(target.local_path.join("HEAD.json")).expect("first head"),
+        )
+        .expect("valid first head");
+        let first_index: serde_json::Value = serde_json::from_slice(
+            &fs::read(target.local_path.join("index.json")).expect("first data index"),
+        )
+        .expect("valid first data index");
+        let first_categories: serde_json::Value = serde_json::from_slice(
+            &fs::read(
+                target
+                    .local_path
+                    .join("index/v1/current/categories/manifest.json"),
+            )
+            .expect("first category manifest"),
+        )
+        .expect("valid first category manifest");
+
+        items[0].company_category_key = "health-care-04b0a88a87070712".to_owned();
+        items[0].company_category_name = "Health Care".to_owned();
+        let second = export_archive(target.clone(), items)
+            .await
+            .expect("taxonomy-only export");
+        assert!(second.changed);
+        let second_head: serde_json::Value = serde_json::from_slice(
+            &fs::read(target.local_path.join("HEAD.json")).expect("second head"),
+        )
+        .expect("valid second head");
+        let second_index: serde_json::Value = serde_json::from_slice(
+            &fs::read(target.local_path.join("index.json")).expect("second data index"),
+        )
+        .expect("valid second data index");
+        let second_categories: serde_json::Value = serde_json::from_slice(
+            &fs::read(
+                target
+                    .local_path
+                    .join("index/v1/current/categories/manifest.json"),
+            )
+            .expect("second category manifest"),
+        )
+        .expect("valid second category manifest");
+
+        assert_eq!(first_head["generation"], second_head["generation"]);
+        assert_eq!(
+            first_categories["generation"],
+            second_categories["generation"]
+        );
+        assert_ne!(
+            first_categories["taxonomy_generation"],
+            second_categories["taxonomy_generation"]
+        );
+        assert_eq!(
+            first_index["taxonomy_generation"],
+            first_categories["taxonomy_generation"]
+        );
+        assert_eq!(
+            second_index["taxonomy_generation"],
+            second_categories["taxonomy_generation"]
+        );
+        assert_ne!(
+            first_index["taxonomy_generation"],
+            second_index["taxonomy_generation"]
+        );
+        assert!(first_head.get("taxonomy_generation").is_none());
+        assert!(second_head.get("taxonomy_generation").is_none());
+        assert_eq!(
+            second_categories["categories"][0]["key"],
+            "health-care-04b0a88a87070712"
+        );
+    }
+
+    #[tokio::test]
+    async fn category_company_pages_are_bounded() {
+        let temporary = TempDir::new().expect("temporary directory");
+        let (target, seed) = fixture(temporary.path());
+        let seed = seed.first().expect("fixture item");
+        let items = (0..101)
+            .map(|index| {
+                let mut item = seed.clone();
+                let url = Url::parse(&format!("https://example.com/company-{index}/post"))
+                    .expect("valid URL");
+                item.item.id = Uuid::new_v4();
+                item.item.company_id = Uuid::new_v4();
+                item.item.source_id = Uuid::new_v4();
+                item.item.external_id = format!("company-{index}-post");
+                item.item.url = url.clone();
+                item.item.canonical_url = url;
+                item.company_key = format!("company-{index:03}");
+                item.company_name = format!("Company {index:03}");
+                item.source_key = format!("company-{index:03}-news");
+                item
+            })
+            .collect::<Vec<_>>();
+
+        export_archive(target.clone(), items)
+            .await
+            .expect("category-paged export");
+        let categories: serde_json::Value = serde_json::from_slice(
+            &fs::read(
+                target
+                    .local_path
+                    .join("index/v1/current/categories/manifest.json"),
+            )
+            .expect("category manifest"),
+        )
+        .expect("valid category manifest");
+        assert_eq!(categories["page_size"], 100);
+        assert_eq!(categories["categories"][0]["page_count"], 2);
+        assert_eq!(
+            categories["categories"][0]["pages"][0]["company_count"],
+            100
+        );
+        assert_eq!(categories["categories"][0]["pages"][1]["company_count"], 1);
+        assert!(
+            !target
+                .local_path
+                .join("index/v1/current/categories/buckets/technology-3169ce6442acdc81.json")
+                .exists()
+        );
+        let validation = Command::new("python3")
+            .current_dir(&target.local_path)
+            .arg("scripts/validate_archive.py")
+            .output()
+            .expect("run generated archive validator");
+        assert!(
+            validation.status.success(),
+            "{}",
+            String::from_utf8_lossy(&validation.stderr)
+        );
     }
 
     #[tokio::test]

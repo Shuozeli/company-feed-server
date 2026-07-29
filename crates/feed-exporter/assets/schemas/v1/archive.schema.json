@@ -12,6 +12,12 @@
       "type": "string",
       "pattern": "^[0-9a-f]{64}$"
     },
+    "CategoryKey": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^(?:uncategorized|[a-z0-9]+(?:-[a-z0-9]+)*-[0-9a-f]{16})$"
+    },
     "Sha256": {
       "type": "string",
       "pattern": "^sha256:[0-9a-f]{64}$"
@@ -968,6 +974,183 @@
         }
       }
     },
+    "CategoryDirectoryDescriptor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "key",
+        "name",
+        "company_count",
+        "record_count",
+        "page_count",
+        "pages"
+      ],
+      "properties": {
+        "key": {
+          "$ref": "#/$defs/CategoryKey"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "company_count": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "record_count": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "page_count": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "pages": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/CategoryDirectoryPageDescriptor"
+          }
+        }
+      }
+    },
+    "CategoryDirectoryPageDescriptor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "page",
+        "path",
+        "company_count",
+        "record_count",
+        "byte_count",
+        "sha256"
+      ],
+      "properties": {
+        "page": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "path": {
+          "$ref": "#/$defs/RelativePath"
+        },
+        "company_count": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        },
+        "record_count": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "byte_count": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "sha256": {
+          "$ref": "#/$defs/Sha256"
+        }
+      }
+    },
+    "CategoryDirectoryPage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "generation",
+        "taxonomy_generation",
+        "key",
+        "name",
+        "page",
+        "company_count",
+        "record_count",
+        "companies"
+      ],
+      "properties": {
+        "schema_version": {
+          "$ref": "#/$defs/SchemaVersion"
+        },
+        "generation": {
+          "$ref": "#/$defs/DocumentId"
+        },
+        "taxonomy_generation": {
+          "$ref": "#/$defs/DocumentId"
+        },
+        "key": {
+          "$ref": "#/$defs/CategoryKey"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "page": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "company_count": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        },
+        "record_count": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "companies": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 100,
+          "items": {
+            "$ref": "#/$defs/CompanyDirectoryEntry"
+          }
+        }
+      }
+    },
+    "CategoryDirectoryManifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "generation",
+        "taxonomy_generation",
+        "company_count",
+        "record_count",
+        "category_count",
+        "page_size",
+        "categories"
+      ],
+      "properties": {
+        "schema_version": {
+          "$ref": "#/$defs/SchemaVersion"
+        },
+        "generation": {
+          "$ref": "#/$defs/DocumentId"
+        },
+        "taxonomy_generation": {
+          "$ref": "#/$defs/DocumentId"
+        },
+        "company_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "record_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "category_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "page_size": {
+          "const": 100
+        },
+        "categories": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CategoryDirectoryDescriptor"
+          }
+        }
+      }
+    },
     "DataIndexPaths": {
       "type": "object",
       "additionalProperties": false,
@@ -976,6 +1159,7 @@
         "archive_manifest",
         "recent_manifest",
         "company_directory_manifest",
+        "category_directory_manifest",
         "openapi",
         "content_rights"
       ],
@@ -990,6 +1174,9 @@
           "$ref": "#/$defs/RelativePath"
         },
         "company_directory_manifest": {
+          "$ref": "#/$defs/RelativePath"
+        },
+        "category_directory_manifest": {
           "$ref": "#/$defs/RelativePath"
         },
         "openapi": {
@@ -1008,6 +1195,7 @@
         "dataset",
         "schema_version",
         "generation",
+        "taxonomy_generation",
         "generated_at",
         "record_count",
         "company_count",
@@ -1015,7 +1203,7 @@
       ],
       "properties": {
         "contract_version": {
-          "const": "1.0.0"
+          "const": "1.1.0"
         },
         "dataset": {
           "const": "company-news-data"
@@ -1024,6 +1212,9 @@
           "$ref": "#/$defs/SchemaVersion"
         },
         "generation": {
+          "$ref": "#/$defs/DocumentId"
+        },
+        "taxonomy_generation": {
           "$ref": "#/$defs/DocumentId"
         },
         "generated_at": {

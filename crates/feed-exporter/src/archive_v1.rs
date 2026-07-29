@@ -13,11 +13,12 @@ use sha2::{Digest, Sha256};
 use crate::ExportError;
 
 pub(super) const SCHEMA_VERSION: &str = "1.0.0";
-const DATA_INDEX_VERSION: &str = "1.0.0";
+const DATA_INDEX_VERSION: &str = "1.1.0";
 const SHARD_MAX_RECORDS: usize = 5_000;
 const SHARD_TARGET_MAX_BYTES: usize = 1024 * 1024;
 const SHARD_MAX_PREFIX_DEPTH: usize = 8;
 const BROWSE_PAGE_SIZE: usize = 50;
+const CATEGORY_PAGE_SIZE: usize = 100;
 
 pub(super) const OWNED_PATHS: [&str; 15] = [
     ".github",
@@ -112,6 +113,14 @@ const STATIC_FILES: &[(&str, &[u8])] = &[
         include_bytes!("../assets/schemas/v1/company-directory-bucket.schema.json"),
     ),
     (
+        "schemas/v1/category-directory-manifest.schema.json",
+        include_bytes!("../assets/schemas/v1/category-directory-manifest.schema.json"),
+    ),
+    (
+        "schemas/v1/category-directory-page.schema.json",
+        include_bytes!("../assets/schemas/v1/category-directory-page.schema.json"),
+    ),
+    (
         "scripts/validate_archive.py",
         include_bytes!("../assets/scripts/validate_archive.py"),
     ),
@@ -162,7 +171,7 @@ pub(super) fn materialize_archive(
         company_accumulators
             .entry(projection.item.company_key.clone())
             .or_insert_with(|| CompanyAccumulator::new(projection))
-            .record(projection, projection_index);
+            .record(projection, projection_index)?;
 
         exported.push(ExportedItem {
             feed_item_id: projection.item.item.id,
@@ -171,7 +180,9 @@ pub(super) fn materialize_archive(
         });
     }
 
+    let taxonomy_generation = taxonomy_generation_id(&company_accumulators);
     let mut company_directory = BTreeMap::<String, Vec<CompanyDirectoryEntry>>::new();
+    let mut category_directory = BTreeMap::<String, CategoryDirectoryAccumulator>::new();
     for accumulator in company_accumulators.values() {
         let mut projection_indexes = accumulator.projection_indexes.clone();
         sort_projection_indexes_newest_first(&mut projection_indexes, &projections);
@@ -186,13 +197,28 @@ pub(super) fn materialize_archive(
             accumulator.manifest_path(),
             pretty_json(&accumulator.manifest(&generation, pages))?,
         );
+        let directory_entry = accumulator.directory_entry();
         company_directory
             .entry(company_directory_bucket(&accumulator.company_name))
             .or_default()
-            .push(accumulator.directory_entry());
+            .push(directory_entry.clone());
+        category_directory
+            .entry(accumulator.company_category_key.clone())
+            .or_insert_with(|| CategoryDirectoryAccumulator {
+                name: accumulator.company_category_name.clone(),
+                record_count: 0,
+                companies: Vec::new(),
+            })
+            .record(accumulator, directory_entry)?;
     }
     let company_directory_manifest_path =
         materialize_company_directory(&generation, company_directory, &mut desired)?;
+    let category_directory_manifest_path = materialize_category_directory(
+        &generation,
+        &taxonomy_generation,
+        category_directory,
+        &mut desired,
+    )?;
 
     let mut recent_projection_indexes = (0..projections.len()).collect::<Vec<_>>();
     sort_projection_indexes_newest_first(&mut recent_projection_indexes, &projections);
@@ -290,11 +316,13 @@ pub(super) fn materialize_archive(
     let archive_manifest_path = path_string(&manifest_path)?;
     let recent_manifest_path_string = path_string(&recent_manifest_path)?;
     let company_directory_manifest_path_string = path_string(&company_directory_manifest_path)?;
+    let category_directory_manifest_path_string = path_string(&category_directory_manifest_path)?;
     let data_index = DataIndex {
         contract_version: DATA_INDEX_VERSION,
         dataset: "company-news-data",
         schema_version: SCHEMA_VERSION,
         generation: &generation,
+        taxonomy_generation: &taxonomy_generation,
         generated_at: &generated_at,
         record_count: projections.len(),
         company_count,
@@ -303,6 +331,7 @@ pub(super) fn materialize_archive(
             archive_manifest: &archive_manifest_path,
             recent_manifest: &recent_manifest_path_string,
             company_directory_manifest: &company_directory_manifest_path_string,
+            category_directory_manifest: &category_directory_manifest_path_string,
             openapi: "openapi/openapi.json",
             content_rights: "CONTENT_RIGHTS.md",
         },
@@ -402,6 +431,22 @@ fn is_safe_company_key(value: &str) -> bool {
         })
 }
 
+fn is_safe_category_key(value: &str) -> bool {
+    if value == "uncategorized" {
+        return true;
+    }
+    let Some((slug, digest)) = value.rsplit_once('-') else {
+        return false;
+    };
+    value.len() <= 64
+        && is_safe_company_key(value)
+        && !slug.is_empty()
+        && digest.len() == 16
+        && digest
+            .chars()
+            .all(|character| character.is_ascii_hexdigit() && !character.is_ascii_uppercase())
+}
+
 fn is_safe_owned_relative_path(path: &Path) -> bool {
     !path.as_os_str().is_empty()
         && !path.is_absolute()
@@ -422,6 +467,20 @@ fn generation_id(projections: &[ArticleProjection<'_>]) -> Result<String, Export
         hasher.update(b"\n");
     }
     Ok(hex::encode(hasher.finalize()))
+}
+
+fn taxonomy_generation_id(companies: &BTreeMap<String, CompanyAccumulator>) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(b"company-news-data/taxonomy/v1\0");
+    for company in companies.values() {
+        hasher.update(company.company_key.as_bytes());
+        hasher.update(b"\0");
+        hasher.update(company.company_category_key.as_bytes());
+        hasher.update(b"\0");
+        hasher.update(company.company_category_name.as_bytes());
+        hasher.update(b"\n");
+    }
+    hex::encode(hasher.finalize())
 }
 
 fn article_record<'a>(
@@ -631,6 +690,84 @@ fn materialize_company_directory(
     Ok(manifest_path)
 }
 
+fn materialize_category_directory(
+    generation: &str,
+    taxonomy_generation: &str,
+    mut categories: BTreeMap<String, CategoryDirectoryAccumulator>,
+    desired: &mut BTreeMap<PathBuf, Vec<u8>>,
+) -> Result<PathBuf, ExportError> {
+    let base = PathBuf::from("index/v1/current/categories");
+    let mut descriptors = Vec::with_capacity(categories.len());
+    let mut company_count = 0;
+    let mut record_count = 0;
+    for (key, category) in &mut categories {
+        if !is_safe_category_key(key) {
+            return Err(ExportError::InvalidPath(format!(
+                "category key {key} cannot form an archive path"
+            )));
+        }
+        category.companies.sort_by(|left, right| {
+            left.company_name
+                .to_lowercase()
+                .cmp(&right.company_name.to_lowercase())
+                .then_with(|| left.company_key.cmp(&right.company_key))
+        });
+        company_count += category.companies.len();
+        record_count += category.record_count;
+        let mut pages = Vec::new();
+        for (page_index, companies) in category.companies.chunks(CATEGORY_PAGE_SIZE).enumerate() {
+            let page_number = page_index + 1;
+            let path = base
+                .join(key)
+                .join("pages")
+                .join(format!("{page_number:06}.json"));
+            let page_record_count = companies.iter().map(|company| company.record_count).sum();
+            let page = CategoryDirectoryPage {
+                schema_version: SCHEMA_VERSION,
+                generation,
+                taxonomy_generation,
+                key,
+                name: &category.name,
+                page: page_number,
+                company_count: companies.len(),
+                record_count: page_record_count,
+                companies,
+            };
+            let bytes = pretty_json(&page)?;
+            pages.push(CategoryDirectoryPageDescriptor {
+                page: page_number,
+                path: path_string(&path)?,
+                company_count: companies.len(),
+                record_count: page_record_count,
+                byte_count: bytes.len(),
+                sha256: sha256_prefixed(&bytes),
+            });
+            desired.insert(path, bytes);
+        }
+        descriptors.push(CategoryDirectoryDescriptor {
+            key: key.clone(),
+            name: category.name.clone(),
+            company_count: category.companies.len(),
+            record_count: category.record_count,
+            page_count: pages.len(),
+            pages,
+        });
+    }
+    let manifest_path = base.join("manifest.json");
+    let manifest = CategoryDirectoryManifest {
+        schema_version: SCHEMA_VERSION,
+        generation,
+        taxonomy_generation,
+        company_count,
+        record_count,
+        category_count: descriptors.len(),
+        page_size: CATEGORY_PAGE_SIZE,
+        categories: descriptors,
+    };
+    desired.insert(manifest_path.clone(), pretty_json(&manifest)?);
+    Ok(manifest_path)
+}
+
 fn markdown_document(projection: &ArticleProjection<'_>) -> String {
     let item = &projection.item.item;
     let quoted = |value: &str| serde_json::to_string(value).expect("strings serialize to JSON");
@@ -818,6 +955,8 @@ for the canonical archive checkpoint. Full-text JSONL shards live under \
 [`index/v1/current/`](index/v1/current/), readable articles under \
 [`articles/v1/`](articles/v1/), and machine contracts under \
 [`schemas/v1/`](schemas/v1/).\n\n\
+- [`index/v1/current/categories/manifest.json`](index/v1/current/categories/manifest.json) \
+lists bounded, lazily loaded universe-sector pages.\n\
 - [`ARCHITECTURE.md`](ARCHITECTURE.md) explains identity, trees, shards, and compatibility.\n\
 - [`openapi/openapi.json`](openapi/openapi.json) defines the OpenAPI 3.1 read contract.\n\
 - [`CONTENT_RIGHTS.md`](CONTENT_RIGHTS.md) explains provenance and third-party rights.\n\
@@ -842,6 +981,8 @@ struct ArticleProjection<'a> {
 struct CompanyAccumulator {
     company_key: String,
     company_name: String,
+    company_category_key: String,
+    company_category_name: String,
     record_count: usize,
     first_published_at: Option<DateTime<Utc>>,
     last_published_at: Option<DateTime<Utc>>,
@@ -854,6 +995,8 @@ impl CompanyAccumulator {
         Self {
             company_key: projection.item.company_key.clone(),
             company_name: projection.item.company_name.clone(),
+            company_category_key: projection.item.company_category_key.clone(),
+            company_category_name: projection.item.company_category_name.clone(),
             record_count: 0,
             first_published_at: None,
             last_published_at: None,
@@ -862,7 +1005,19 @@ impl CompanyAccumulator {
         }
     }
 
-    fn record(&mut self, projection: &ArticleProjection<'_>, projection_index: usize) {
+    fn record(
+        &mut self,
+        projection: &ArticleProjection<'_>,
+        projection_index: usize,
+    ) -> Result<(), ExportError> {
+        if self.company_category_key != projection.item.company_category_key
+            || self.company_category_name != projection.item.company_category_name
+        {
+            return Err(ExportError::Invariant(format!(
+                "company {} has inconsistent category assignments",
+                self.company_key
+            )));
+        }
         self.record_count += 1;
         self.projection_indexes.push(projection_index);
         *self
@@ -879,6 +1034,7 @@ impl CompanyAccumulator {
                     .map_or(published_at, |current| current.max(published_at)),
             );
         }
+        Ok(())
     }
 
     fn manifest_path(&self) -> PathBuf {
@@ -1081,7 +1237,7 @@ struct CompanyArticleIndex<'a> {
     pages: Vec<PageDescriptor>,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 struct CompanyDirectoryEntry {
     company_key: String,
     company_name: String,
@@ -1116,6 +1272,75 @@ struct CompanyDirectoryManifest<'a> {
     company_count: usize,
     bucket_count: usize,
     buckets: Vec<CompanyDirectoryBucketDescriptor>,
+}
+
+struct CategoryDirectoryAccumulator {
+    name: String,
+    record_count: usize,
+    companies: Vec<CompanyDirectoryEntry>,
+}
+
+impl CategoryDirectoryAccumulator {
+    fn record(
+        &mut self,
+        company: &CompanyAccumulator,
+        directory_entry: CompanyDirectoryEntry,
+    ) -> Result<(), ExportError> {
+        if self.name != company.company_category_name {
+            return Err(ExportError::Invariant(format!(
+                "category key {} maps to both {} and {}",
+                company.company_category_key, self.name, company.company_category_name
+            )));
+        }
+        self.record_count += company.record_count;
+        self.companies.push(directory_entry);
+        Ok(())
+    }
+}
+
+#[derive(Serialize)]
+struct CategoryDirectoryDescriptor {
+    key: String,
+    name: String,
+    company_count: usize,
+    record_count: usize,
+    page_count: usize,
+    pages: Vec<CategoryDirectoryPageDescriptor>,
+}
+
+#[derive(Serialize)]
+struct CategoryDirectoryPageDescriptor {
+    page: usize,
+    path: String,
+    company_count: usize,
+    record_count: usize,
+    byte_count: usize,
+    sha256: String,
+}
+
+#[derive(Serialize)]
+struct CategoryDirectoryPage<'a> {
+    schema_version: &'a str,
+    generation: &'a str,
+    taxonomy_generation: &'a str,
+    key: &'a str,
+    name: &'a str,
+    page: usize,
+    company_count: usize,
+    record_count: usize,
+    companies: &'a [CompanyDirectoryEntry],
+}
+
+#[derive(Serialize)]
+struct CategoryDirectoryManifest<'a> {
+    schema_version: &'a str,
+    generation: &'a str,
+    taxonomy_generation: &'a str,
+    company_count: usize,
+    record_count: usize,
+    category_count: usize,
+    page_size: usize,
+    categories: Vec<CategoryDirectoryDescriptor>,
 }
 
 #[derive(Serialize)]
@@ -1199,6 +1424,7 @@ struct DataIndexPaths<'a> {
     archive_manifest: &'a str,
     recent_manifest: &'a str,
     company_directory_manifest: &'a str,
+    category_directory_manifest: &'a str,
     openapi: &'a str,
     content_rights: &'a str,
 }
@@ -1209,6 +1435,7 @@ struct DataIndex<'a> {
     dataset: &'a str,
     schema_version: &'a str,
     generation: &'a str,
+    taxonomy_generation: &'a str,
     generated_at: &'a str,
     record_count: usize,
     company_count: usize,
