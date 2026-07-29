@@ -2,9 +2,9 @@
   "openapi": "3.1.2",
   "jsonSchemaDialect": "https://json-schema.org/draft/2020-12/schema",
   "info": {
-    "title": "Company News Archive",
+    "title": "Company News Data",
     "version": "1.0.0",
-    "description": "Read-only contract for static archive files and compatible HTTP adapters.",
+    "description": "Read-only contract for lazy browser indexes, full-text shards, and compatible HTTP adapters.",
     "license": {
       "name": "CC0-1.0 (contract and schemas only)",
       "identifier": "CC0-1.0"
@@ -13,10 +13,31 @@
   "security": [],
   "servers": [
     {
-      "url": "https://raw.githubusercontent.com/Shuozeli/company-news-archive/main"
+      "url": "https://raw.githubusercontent.com/Shuozeli/company-news-data/main"
     }
   ],
   "paths": {
+    "/index.json": {
+      "get": {
+        "operationId": "getDataIndex",
+        "summary": "Bootstrap the current dataset without loading article data",
+        "responses": {
+          "200": {
+            "description": "Current dataset pointers and counts",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../schemas/v1/data-index.schema.json"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
     "/HEAD.json": {
       "get": {
         "operationId": "getArchiveHead",
@@ -49,6 +70,100 @@
               "application/json": {
                 "schema": {
                   "$ref": "../schemas/v1/archive-manifest.schema.json"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/index/v1/current/recent/manifest.json": {
+      "get": {
+        "operationId": "getRecentManifest",
+        "summary": "List bounded newest-first article-summary pages",
+        "responses": {
+          "200": {
+            "description": "Recent article page manifest",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../schemas/v1/recent-manifest.schema.json"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/index/v1/current/recent/pages/{page}.json": {
+      "get": {
+        "operationId": "getRecentPage",
+        "summary": "Read one newest-first article-summary page",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Page"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A bounded article-summary page",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../schemas/v1/browse-page.schema.json"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/index/v1/current/companies/manifest.json": {
+      "get": {
+        "operationId": "getCompanyDirectoryManifest",
+        "summary": "List alphabetical company-directory buckets",
+        "responses": {
+          "200": {
+            "description": "Company-directory manifest",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../schemas/v1/company-directory-manifest.schema.json"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/index/v1/current/companies/buckets/{bucket}.json": {
+      "get": {
+        "operationId": "getCompanyDirectoryBucket",
+        "summary": "Read one alphabetical company-directory bucket",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/DirectoryBucket"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A bounded company-directory bucket",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../schemas/v1/company-directory-bucket.schema.json"
                 }
               }
             }
@@ -127,6 +242,67 @@
         }
       }
     },
+    "/articles/v1/{companyBucket}/{companyKey}/company.json": {
+      "get": {
+        "operationId": "getCompanyManifest",
+        "summary": "Read one company timeline manifest",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/CompanyBucket"
+          },
+          {
+            "$ref": "#/components/parameters/CompanyKey"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Company metadata and bounded article pages",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../schemas/v1/company-manifest.schema.json"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/articles/v1/{companyBucket}/{companyKey}/index/pages/{page}.json": {
+      "get": {
+        "operationId": "getCompanyArticlePage",
+        "summary": "Read one newest-first company article-summary page",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/CompanyBucket"
+          },
+          {
+            "$ref": "#/components/parameters/CompanyKey"
+          },
+          {
+            "$ref": "#/components/parameters/Page"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A bounded company article-summary page",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "../schemas/v1/browse-page.schema.json"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
     "/articles/v1/{companyBucket}/{companyKey}/{year}/{month}/{documentBucket}/{documentId}/record.json": {
       "get": {
         "operationId": "getArticleRecord",
@@ -167,6 +343,47 @@
           }
         }
       }
+    },
+    "/articles/v1/{companyBucket}/{companyKey}/{year}/{month}/{documentBucket}/{documentId}/article.md": {
+      "get": {
+        "operationId": "getArticleMarkdown",
+        "summary": "Read the full normalized article as Markdown",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/CompanyBucket"
+          },
+          {
+            "$ref": "#/components/parameters/CompanyKey"
+          },
+          {
+            "$ref": "#/components/parameters/Year"
+          },
+          {
+            "$ref": "#/components/parameters/Month"
+          },
+          {
+            "$ref": "#/components/parameters/DocumentBucket"
+          },
+          {
+            "$ref": "#/components/parameters/DocumentId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "UTF-8 article Markdown",
+            "content": {
+              "text/markdown": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -176,6 +393,25 @@
       }
     },
     "parameters": {
+      "Page": {
+        "name": "page",
+        "in": "path",
+        "required": true,
+        "description": "A six-digit page number from the parent manifest.",
+        "schema": {
+          "type": "string",
+          "pattern": "^[0-9]{6}$"
+        }
+      },
+      "DirectoryBucket": {
+        "name": "bucket",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "pattern": "^(?:[a-z]|0-9|other)$"
+        }
+      },
       "Year": {
         "name": "year",
         "in": "path",

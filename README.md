@@ -377,12 +377,18 @@ evergreen content as new.
 The default exporter writes an owned archive tree:
 
 ```text
+index.json
 HEAD.json
 README.md
 articles/v1/<company-hash>/<company-key>/company.json
+articles/v1/<company-hash>/<company-key>/index/pages/<page>.json
 articles/v1/<company-hash>/<company-key>/<YYYY>/<MM>/<document-hash>/<document-id>/article.md
 articles/v1/<company-hash>/<company-key>/<YYYY>/<MM>/<document-hash>/<document-id>/record.json
 index/v1/current/manifest.json
+index/v1/current/recent/manifest.json
+index/v1/current/recent/pages/<page>.json
+index/v1/current/companies/manifest.json
+index/v1/current/companies/buckets/<letter>.json
 index/v1/current/partitions/<YYYY>/<MM>/manifest.json
 index/v1/current/partitions/<YYYY>/<MM>/shards/<hash-prefix>.jsonl
 schemas/v1/
@@ -390,12 +396,14 @@ openapi/openapi.json
 ```
 
 The maintained output is published in
-[company-news-archive](https://github.com/Shuozeli/company-news-archive).
+[company-news-data](https://github.com/Shuozeli/company-news-data).
 
 The JSONL index is partitioned by archival month and adaptively split as a
 SHA-256 prefix trie. Manifests publish record/byte counts and content hashes;
-`HEAD.json` provides a deterministic generation checkpoint. Article identity
-uses company name-first keys and canonical URLs, never a stock ticker.
+`HEAD.json` provides a deterministic generation checkpoint. A small
+`index.json` points browsers to bounded recent and company-summary pages, so
+interactive clients never load full-text shards. Article identity uses company
+name-first keys and canonical URLs, never a stock ticker.
 
 `push_enabled` is `false` in the sample config. A source must also have
 `public_export_allowed=true`; validation does not grant that permission by

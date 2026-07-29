@@ -10,9 +10,9 @@ Exports normally run as periodic jobs. Manual export commands exist for debug, b
 
 ```yaml
 targets:
-  - target_id: company-news-archive
-    repo_url: git@github.com:org/company-news-archive.git
-    local_path: ./exports/company-news-archive
+  - target_id: company-news-data
+    repo_url: git@github.com:org/company-news-data.git
+    local_path: ./exports/company-news-data
     branch: main
     format: markdown_json
     layout: by_company_date
@@ -23,7 +23,8 @@ targets:
 ## Archive Layout
 
 ```text
-company-news-archive/
+company-news-data/
+  index.json
   HEAD.json
   README.md
   ARCHITECTURE.md
@@ -32,11 +33,18 @@ company-news-archive/
     <company-hash>/
       <company-key>/
         company.json
+        index/pages/<page>.json
         <year>/<month>/<document-hash>/<document-id>/
           article.md
           record.json
   index/v1/current/
     manifest.json
+    recent/
+      manifest.json
+      pages/<page>.json
+    companies/
+      manifest.json
+      buckets/<letter>.json
     partitions/<year>/<month>/
       manifest.json
       shards/
@@ -97,6 +105,11 @@ The index first partitions records by archival month. Each partition starts as
 `document_id` when it exceeds either 5,000 records or 1 MiB. Every JSONL leaf is
 UTF-8, sorted by document ID, compact, and newline terminated.
 
+`index.json` is the small browser bootstrap. It points to bounded newest-first
+summary pages and an alphabetical company directory. Article bodies are loaded
+only after selection, while bulk consumers continue to use full-text JSONL
+shards.
+
 `HEAD.json` points to the current root manifest. The root references monthly
 partition manifests, which reference leaf shards with:
 
@@ -150,7 +163,7 @@ Materializing files and creating a local commit are separate from pushing. A per
 ## Commands
 
 ```bash
-feed-admin export --target company-news-archive
+feed-admin export --target company-news-data
 feed-admin export
 ```
 
@@ -164,9 +177,9 @@ Export targets define cadence:
 
 ```yaml
 targets:
-  - target_id: company-news-archive
-    repo_url: git@github.com:org/company-news-archive.git
-    local_path: ./exports/company-news-archive
+  - target_id: company-news-data
+    repo_url: git@github.com:org/company-news-data.git
+    local_path: ./exports/company-news-data
     branch: main
     format: markdown_json
     layout: by_company_date

@@ -1,7 +1,7 @@
 targets:
-  - target_id: company-news-archive
-    repo_url: https://github.com/Shuozeli/company-news-archive.git
-    local_path: ./exports/company-news-archive
+  - target_id: company-news-data
+    repo_url: https://github.com/Shuozeli/company-news-data.git
+    local_path: ./exports/company-news-data
     branch: main
     format: markdown_json
     layout: by_company_date

@@ -1,4 +1,4 @@
-# Archive architecture
+# Data architecture
 
 This repository is a generated, version-controlled publication artifact. The
 source service remains the system of record.
@@ -6,15 +6,25 @@ source service remains the system of record.
 ## Layout
 
 ```text
+index.json
 HEAD.json
-articles/v1/<company-bucket>/<company-key>/<year>/<month>/<document-bucket>/<document-id>/
-  article.md
-  record.json
 index/v1/current/
   manifest.json
+  recent/
+    manifest.json
+    pages/<page>.json
+  companies/
+    manifest.json
+    buckets/<letter>.json
   partitions/<year>/<month>/
     manifest.json
     shards/<hash-prefix>.jsonl
+articles/v1/<company-bucket>/<company-key>/
+  company.json
+  index/pages/<page>.json
+articles/v1/<company-bucket>/<company-key>/<year>/<month>/<document-bucket>/<document-id>/
+  article.md
+  record.json
 schemas/v1/
 openapi/openapi.json
 ```
@@ -41,9 +51,23 @@ every leaf.
 JSONL is UTF-8, one compact JSON object per line, sorted by `document_id`, with a
 final newline. Shards are snapshots; Git commits provide the change log.
 
+## Lazy browser indexes
+
+`index.json` is the stable, lightweight browser bootstrap. It points to:
+
+- newest-first article-summary pages;
+- an alphabetical company directory split into 37 bounded buckets;
+- the canonical full-text archive manifest.
+
+Article-summary pages contain metadata and paths only. A browser fetches an
+individual `record.json` and `article.md` after the reader selects an article.
+Full `body_text` remains in the JSONL shards for downstream indexing, but is
+never duplicated into browser navigation pages.
+
 ## Checkpoints
 
-`HEAD.json` points to the current root manifest. Its `generation` is a
+`index.json` and `HEAD.json` identify the same generation. `HEAD.json` points
+to the current root manifest. Its `generation` is a
 deterministic digest of the schema version and exported document/content
 identities. Re-running an unchanged export produces no file or Git change.
 
@@ -55,8 +79,8 @@ Paths under `v1` follow semantic compatibility:
 - existing field meaning does not change;
 - required-field removal, type changes, and identity changes require `v2`.
 
-Consumers should start at `HEAD.json`, verify manifest and shard hashes, and
-ignore unknown fields.
+Interactive consumers should start at `index.json`; bulk consumers may start
+at `HEAD.json`. Both should verify referenced hashes and ignore unknown fields.
 
 ## Repository scale boundary
 
