@@ -4,16 +4,32 @@
 [![Security audit](https://github.com/Shuozeli/company-feed-server/actions/workflows/security-audit.yml/badge.svg)](https://github.com/Shuozeli/company-feed-server/actions/workflows/security-audit.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-Company Feed Server is an open-source Rust/Postgres product for finding,
-validating, crawling, and reviewing official company blogs, newsrooms, press
-feeds, and engineering publications.
+Company Feed Server is an open-source, company-first news aggregation stack. It
+finds and validates company blogs, newsrooms, press feeds, engineering
+publications, and product publications; crawls RSS, Atom, and public HTML;
+hydrates article content; records review evidence; and publishes deterministic
+static indexes.
 
-> Release status: `v0.1.0` release candidate. The deployment is self-hosted and
-> intended for trusted operators; it is not a hosted multi-tenant service.
+**Explore the public reader:** [Company News](https://shuozeli.github.io/company-news-ui/)
+
+[![Company News reader showing the category, company, and article tree](https://raw.githubusercontent.com/Shuozeli/company-news-ui/main/public/og-card.png)](https://shuozeli.github.io/company-news-ui/)
+
+The project is split into three independently usable repositories:
+
+| Repository | Role |
+|---|---|
+| [`company-feed-server`](https://github.com/Shuozeli/company-feed-server) | Rust/Postgres discovery, validation, crawling, review, and export engine |
+| [`company-news-data`](https://github.com/Shuozeli/company-news-data) | Generated static archive, lazy indexes, schemas, and provenance |
+| [`company-news-ui`](https://github.com/Shuozeli/company-news-ui) | Vite/React static reader that loads the archive through `index.json` |
 
 The system is name-first. Public and private companies use the same company
 record; stock listings are optional metadata and are never used as company
 identity or web-search input.
+
+> Status: pre-release software on `main`. Build locally from source; no tagged
+> container release is available yet. The deployment is self-hosted and
+> intended for trusted operators, not as a hosted multi-tenant service. See
+> [Launch readiness](docs/launch-readiness.md) for the current preflight.
 
 Only public web content is in scope. The server does not use logged-in browser
 profiles, bypass paywalls, or require private provider code.
@@ -111,17 +127,19 @@ bounded waves.
 
 ## Quick Start
 
-Docker and Docker Compose are sufficient:
+Docker and Docker Compose are sufficient to start the API. Export the sample
+environment into the current shell as well so later `cargo run` operator
+commands use the same database; those host-side commands additionally require
+the Rust toolchain.
 
 ```bash
 cp .env.example .env
+set -a
+source .env
+set +a
 docker compose up --build -d postgres server
 curl --fail http://localhost:8080/ready
 ```
-
-Tagged releases also publish the same multi-binary image to GitHub Container
-Registry. Set `COMPANY_FEED_IMAGE` to a release tag and omit `--build` to run
-that artifact.
 
 The sample database credentials are for loopback-only local development.
 Replace them and add authenticated network controls before any non-local
@@ -307,14 +325,17 @@ style product, engineering, research, and brand publication expansion.
 
 Empty feeds and non-feed responses are automatically rejected in both modes.
 Transient network failures remain retryable and auditable. Automatic activation
-never enables public archive export unless `VALIDATION_PUBLIC_EXPORT=true`,
-which defaults to `false`.
+sets the source-level `public_export_allowed` flag only when
+`VALIDATION_PUBLIC_EXPORT=true`, which defaults to `false`. A target configured
+with the broader `approved_public` scope selects approved sources regardless of
+that source flag.
 
 In `trusted_adapter` mode, ambiguous ownership, cross-domain hosting, staleness,
 locale, and scope do not create a manual-review obligation. The dashboard labels
 sources that did not also pass strict policy as `AI-assisted / provisional`.
 Operators remove a bad association with `Wrong / disable`. Public Git export
-remains a separate explicit permission.
+remains a separate operator-controlled publication setting. That setting
+selects records; it does not determine or grant rights in publisher material.
 
 Rejecting an already accepted candidate disables its source, cancels pending
 crawls, removes it from public item/API results, and records the source-bearing
@@ -411,9 +432,20 @@ invalidation. The bootstrap contract is `1.1.0`; `HEAD.json`, article schemas,
 and article identity remain `1.0.0`. Article identity uses company name-first
 keys and canonical URLs, never a stock ticker.
 
-`push_enabled` is `false` in the sample config. A source must also have
-`public_export_allowed=true`; validation does not grant that permission by
-default.
+`push_enabled` is `false` in the sample config. Under the default source-flag
+selection scope, a source must also have `public_export_allowed=true`;
+validation leaves that flag `false` unless an operator changes it. An export
+target may instead explicitly set
+`metadata.publication_scope=approved_public`, which selects non-private items
+from all approved, currently valid sources. The checked-in
+[`configs/export_targets.yaml`](configs/export_targets.yaml) sample uses that
+broader selection scope while keeping Git push disabled.
+
+Selection for export is an operator publication decision, not a statement that
+the project or operator owns, licenses, or has permission to redistribute the
+selected publisher material. Operators must review applicable terms and rights
+before publishing an archive. See [Data and content
+policy](docs/data-and-content-policy.md).
 
 ## Native Development and Verification
 
@@ -500,6 +532,7 @@ curl --fail "http://${TAILSCALE_IP}:18080/api/v1/news-items?limit=1"
 - [Responsible use](docs/responsible-use.md)
 - [Data and content policy](docs/data-and-content-policy.md)
 - [Launch readiness](docs/launch-readiness.md)
+- [Show HN preflight worksheet](docs/show-hn-preflight.md)
 - [Roadmap](docs/roadmap.md)
 - [Contributing](CONTRIBUTING.md)
 - [Security policy](SECURITY.md)

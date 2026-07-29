@@ -6,8 +6,9 @@ have independent runtimes and durable job ownership.
 
 The production boundary is public data only. Discovery may propose URLs;
 validation may activate a technically and editorially safe feed; only approved
-sources may be crawled; and only explicitly export-enabled sources may enter a
-Git archive.
+sources may be crawled; and only records selected by the configured export
+target policy may enter a Git archive. Export selection is not a determination
+or grant of rights in publisher material.
 
 ## Data Flow
 
@@ -274,7 +275,7 @@ Allowed:
 - public HTML pages used for discovery;
 - public company homepage, newsroom, blog, engineering, press, and IR pages;
 - normalized public article metadata and text;
-- explicitly approved public Git exports.
+- operator-configured Git exports after an applicable rights review.
 
 Disallowed:
 
@@ -283,7 +284,8 @@ Disallowed:
 - private source lists or database snapshots;
 - provider prompts, queries, SDKs, credentials, and raw responses in this
   repository;
-- automatic public export merely because a feed validates.
+- treating source validation or export selection as a grant of publisher
+  rights.
 
 The operator write API is not an authentication layer. Deploy `/review` and
 candidate mutation routes behind a trusted network or authenticated gateway.

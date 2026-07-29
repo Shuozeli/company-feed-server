@@ -18,17 +18,30 @@ targets:
     layout: by_company_date
     cadence_seconds: 3600
     push_enabled: false
+    metadata:
+      publication_scope: approved_public
 ```
+
+Without `metadata.publication_scope`, the default selection additionally
+requires `source.public_export_allowed=true`. The checked-in sample explicitly
+uses `approved_public`, which selects non-private records from all approved,
+currently valid sources. `push_enabled=false` is independent: it prevents a Git
+push, not local materialization.
 
 ## Archive Layout
 
 ```text
 company-news-data/
+  .github/
+    ISSUE_TEMPLATE/
+    workflows/validate.yml
   index.json
   HEAD.json
   README.md
   ARCHITECTURE.md
+  CONTRIBUTING.md
   CONTENT_RIGHTS.md
+  SECURITY.md
   articles/v1/
     <company-hash>/
       <company-key>/
@@ -155,16 +168,24 @@ Run `python3 scripts/validate_archive.py` inside a generated repository to
 verify schema/OpenAPI JSON parsing, manifest and content hashes, counts, shard
 ordering, unique document IDs, and all record/article references.
 
-## Export Safety Rules
+## Export Selection and Publication Responsibility
 
-Exporter must only export items when:
+The exporter only considers non-private, non-future items from approved,
+currently valid public source kinds. HTML/browser items must also retain a
+valid active recipe.
 
-- source is approved
-- source has `public_export_allowed = true`
-- source kind is public
-- title and URL are present
-- item is not marked private
-- metadata passes redaction
+The target then uses one of two source-selection scopes:
+
+- default: require `source.public_export_allowed=true`;
+- explicit broader scope:
+  `metadata.publication_scope=approved_public` includes every otherwise
+  eligible approved source.
+
+The repository sample uses the broader scope and disables Git push. Neither
+scope determines ownership, permission, licensing, fair use, or another legal
+basis for redistribution. `push_enabled` controls transport only. The operator
+is responsible for reviewing applicable publisher terms and rights before
+making a generated archive public.
 
 ## Idempotency
 
@@ -206,6 +227,8 @@ targets:
     layout: by_company_date
     cadence_seconds: 3600
     push_enabled: false
+    metadata:
+      publication_scope: approved_public
 ```
 
 The scheduler creates `export_target` jobs for due targets. A worker materializes new exportable items, commits them locally, and optionally pushes when configured.

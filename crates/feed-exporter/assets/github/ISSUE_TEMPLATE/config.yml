@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Reader or interface bug
+    url: https://github.com/Shuozeli/company-news-ui/issues/new
+    about: Report rendering, navigation, or browser-loading problems in the UI repository.
+  - name: Collection or exporter bug
+    url: https://github.com/Shuozeli/company-feed-server/issues/new
+    about: Report crawler, normalization, database, schema-generation, or exporter implementation problems.
+  - name: Security vulnerability
+    url: https://github.com/Shuozeli/company-news-data/security/advisories/new
+    about: Report archive, validator, workflow, or static-read vulnerabilities privately.

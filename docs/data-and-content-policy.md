@@ -28,6 +28,20 @@ Operators choose their data sources and export policy. They are responsible
 for applicable website terms, robots directives, copyright, database rights,
 privacy obligations, retention, and redistribution permissions.
 
-Public Git export requires both an enabled export target and
-`public_export_allowed=true` on the source. The sample configuration keeps
-push and public export disabled.
+An enabled export target uses one of two record-selection scopes:
+
+- By default, a source must have `public_export_allowed=true`.
+- A target may explicitly set
+  `metadata.publication_scope=approved_public` to select non-private records
+  from every approved, currently valid source.
+
+The checked-in [`configs/export_targets.yaml`](../configs/export_targets.yaml)
+sample uses the broader `approved_public` selection scope. It keeps
+`push_enabled=false`, so the sample materializes locally but does not push.
+
+Both settings are operational publication controls only. A record being
+publicly accessible, approved as a company source, selected by an export
+target, or already present in an archive does not establish ownership,
+permission, a license, or a legal basis for redistribution. Operators must
+perform and document their own rights review before publishing generated
+material.

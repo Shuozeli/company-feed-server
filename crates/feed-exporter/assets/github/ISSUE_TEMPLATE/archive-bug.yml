@@ -1,0 +1,41 @@
+name: Archive or schema bug
+description: Report a reproducible manifest, schema, hash, path, or validation failure.
+title: "archive: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not include credentials, private URLs, provider responses, or article bodies. Follow `SECURITY.md` for vulnerabilities.
+  - type: input
+    id: generation
+    attributes:
+      label: Archive generation
+      description: Copy the generation from index.json or HEAD.json.
+    validations:
+      required: true
+  - type: input
+    id: path
+    attributes:
+      label: Affected relative path
+      description: For example, a manifest, shard, record, schema, or article path.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: Provide the smallest commands or read sequence that reproduces the problem.
+    validations:
+      required: true
+  - type: textarea
+    id: validator_output
+    attributes:
+      label: Sanitized validator output
+      description: Include relevant output from scripts/validate_archive.py, if available.
+      render: text
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected result
+    validations:
+      required: true

@@ -293,6 +293,33 @@ mod tests {
         );
         assert!(target.local_path.join("HEAD.json").is_file());
         assert!(target.local_path.join("index.json").is_file());
+        for generated_asset in [
+            "CONTRIBUTING.md",
+            "SECURITY.md",
+            ".github/ISSUE_TEMPLATE/archive-bug.yml",
+            ".github/ISSUE_TEMPLATE/config.yml",
+            ".github/ISSUE_TEMPLATE/data-correction.yml",
+            ".github/ISSUE_TEMPLATE/rights.yml",
+        ] {
+            assert!(
+                target.local_path.join(generated_asset).is_file(),
+                "missing generated repository asset {generated_asset}"
+            );
+        }
+        let generated_readme =
+            fs::read_to_string(target.local_path.join("README.md")).expect("generated README");
+        assert!(generated_readme.contains("[`CONTRIBUTING.md`](CONTRIBUTING.md)"));
+        assert!(generated_readme.contains("[`SECURITY.md`](SECURITY.md)"));
+        assert!(generated_readme.contains("Do not start with a normal Git clone"));
+        assert!(generated_readme.contains("Taxonomy generation"));
+        assert!(generated_readme.contains("data-correction.yml"));
+        assert!(generated_readme.contains("rights.yml"));
+        let generated_rights = fs::read_to_string(target.local_path.join("CONTENT_RIGHTS.md"))
+            .expect("generated content-rights policy");
+        assert!(generated_rights.contains("approved_public"));
+        assert!(generated_rights.contains("not a copyright license"));
+        assert!(generated_rights.contains("data-correction.yml"));
+        assert!(generated_rights.contains("rights.yml"));
         assert!(
             target
                 .local_path

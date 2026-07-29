@@ -1,0 +1,96 @@
+name: Rights, attribution, or removal request
+description: Report a copyright, licensing, permission, attribution, trademark, or removal concern.
+title: "[Rights request]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This form creates a public issue. Include only information needed to identify the material and evaluate the request. Do not post confidential documents, government identifiers, signatures, credentials, or unnecessary personal information.
+
+  - type: dropdown
+    id: relationship
+    attributes:
+      label: Your relationship to the material
+      options:
+        - Rights holder
+        - Authorized representative
+        - Publisher or source operator
+        - Subject of the material
+        - Dataset user reporting a concern
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: request_type
+    attributes:
+      label: Request type
+      options:
+        - Copyright or licensing
+        - Redistribution permission
+        - Attribution or provenance
+        - Trademark
+        - Privacy or personal information
+        - Removal request
+        - Other rights concern
+    validations:
+      required: true
+
+  - type: textarea
+    id: repository_material
+    attributes:
+      label: Affected repository material
+      description: List each repository path or document ID covered by this request.
+      placeholder: |
+        articles/v1/.../article.md
+        document_id: ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: publisher_urls
+    attributes:
+      label: Original publisher URLs
+      description: List the corresponding canonical source pages when available.
+      placeholder: https://example.com/news/article
+    validations:
+      required: true
+
+  - type: textarea
+    id: basis
+    attributes:
+      label: Basis for the request
+      description: Explain the concern and your authority or public evidence. Do not attach confidential proof to this public issue.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: requested_action
+    attributes:
+      label: Requested action
+      options:
+        - Correct attribution or provenance
+        - Replace article text with metadata and canonical link
+        - Exclude from future snapshots
+        - Remove from current snapshot
+        - Review earlier Git history
+        - Contact me before deciding
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: additional_context
+    attributes:
+      label: Additional public context
+      description: Add any non-confidential details needed to understand the request.
+
+  - type: checkboxes
+    id: confirmation
+    attributes:
+      label: Good-faith confirmation
+      options:
+        - label: I believe this request is accurate and made in good faith.
+          required: true
+        - label: I have not included confidential material or unnecessary personal information.
+          required: true

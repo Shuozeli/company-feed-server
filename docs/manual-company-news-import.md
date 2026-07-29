@@ -495,8 +495,11 @@ manual review queue.
 A previously disabled origin remains disabled and is skipped; the import never
 silently re-enables it. Created sources default to
 `public_export_allowed=false`. Set `NEWS_EXTRACTION_PUBLIC_EXPORT=true` only
-when deployment policy explicitly permits these items in the public Git
-archive.
+when deployment policy deliberately selects these sources for a Git archive.
+An export target configured with
+`metadata.publication_scope=approved_public` selects otherwise eligible
+approved sources regardless of this source flag. Selection does not establish
+redistribution rights.
 
 Inspect the immutable run audit through:
 

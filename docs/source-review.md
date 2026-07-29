@@ -213,8 +213,12 @@ remain `needs_review`. With `trusted_adapter`, adapter-backed usable feeds
 activate provisionally instead; there is no ownership-review queue to clear by
 hand. Non-adapter candidates continue to use strict behavior.
 
-Public export is a separate approval. Set it per operator decision or explicitly
-enable `VALIDATION_PUBLIC_EXPORT`; the safe default is `false`.
+Source-level public-export selection is separate from activation. Set
+`public_export_allowed` per operator decision or explicitly enable
+`VALIDATION_PUBLIC_EXPORT`; the source-level default is `false`. An export
+target configured with `metadata.publication_scope=approved_public` deliberately
+bypasses that source flag for otherwise eligible approved sources. Neither
+setting establishes redistribution rights.
 
 Rejecting a new candidate prevents activation. Rejecting an accepted candidate
 also:

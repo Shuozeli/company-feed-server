@@ -6,8 +6,15 @@ source service remains the system of record.
 ## Layout
 
 ```text
+.github/
+  ISSUE_TEMPLATE/
+  workflows/validate.yml
 index.json
 HEAD.json
+README.md
+CONTRIBUTING.md
+SECURITY.md
+CONTENT_RIGHTS.md
 index/v1/current/
   manifest.json
   recent/
@@ -59,7 +66,8 @@ final newline. Shards are snapshots; Git commits provide the change log.
 `index.json` is the stable, lightweight browser bootstrap. It points to:
 
 - newest-first article-summary pages;
-- an alphabetical company directory split into 37 bounded buckets;
+- an alphabetical company directory using bounded `a`–`z`, `0-9`, and `other`
+  buckets, with only non-empty buckets materialized;
 - a category manifest with bounded 100-company pages per universe sector;
 - the canonical full-text archive manifest.
 

@@ -1,0 +1,70 @@
+name: Data correction
+description: Report incorrect identity, category, metadata, provenance, duplication, or extracted content.
+title: "[Data correction]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for helping improve the dataset. This form is public. Do not include credentials, confidential material, or unnecessary personal information.
+
+  - type: dropdown
+    id: correction_type
+    attributes:
+      label: Correction type
+      options:
+        - Company identity or display name
+        - Company category
+        - Canonical or observed URL
+        - Title, summary, or publication date
+        - Source or provenance
+        - Extracted article content
+        - Duplicate company or article
+        - Other data problem
+    validations:
+      required: true
+
+  - type: input
+    id: repository_path
+    attributes:
+      label: Affected repository path
+      description: Paste the record.json, article.md, company.json, or index path.
+      placeholder: articles/v1/.../record.json
+    validations:
+      required: true
+
+  - type: input
+    id: canonical_url
+    attributes:
+      label: Original publisher URL
+      description: Provide the canonical public page when one exists.
+      placeholder: https://example.com/news/article
+
+  - type: input
+    id: generation
+    attributes:
+      label: Dataset generation
+      description: Copy the generation from index.json so the report can be reproduced.
+
+  - type: textarea
+    id: observed
+    attributes:
+      label: What is incorrect?
+      description: Quote only the minimum text needed to identify the problem.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected correction and evidence
+      description: Explain the expected value and link to public supporting evidence.
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: confirmation
+    attributes:
+      label: Public report confirmation
+      options:
+        - label: I have not included secrets, confidential material, or unnecessary personal information.
+          required: true

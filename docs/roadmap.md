@@ -84,8 +84,8 @@ Browser rendering remains an optional adapter expansion.
 - [x] Add an independent sequential import worker, run audit, and API.
 - [x] Require an explicit company name/key and remove every automatic import
   producer, due selector, and cadence setting.
-- [x] Preserve per-origin source ownership, disabled-source state, and opt-in
-  public export.
+- [x] Preserve per-origin source ownership, disabled-source state, and
+  operator-configured public export selection.
 - General static HTML listing crawler.
 - Public `pwright` browser adapter.
 - Public recipe format.

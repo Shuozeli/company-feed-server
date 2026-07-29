@@ -21,5 +21,6 @@
 | docs/exporters.md | Git/GitHub export design and periodic export jobs | Export format or safety changes |
 | docs/responsible-use.md | Public-fetch, access-control, identity, concurrency, and operator expectations | Crawl policy or safety defaults change |
 | docs/data-and-content-policy.md | Repository and third-party data/content licensing boundary | Bundled data, fixtures, or export policy changes |
-| docs/launch-readiness.md | Current release-candidate gates, evidence, and publication sequence | Launch status or release gates change |
+| docs/launch-readiness.md | Current launch blockers, exact-commit evidence gates, and publication sequence | Launch status, publication model, archive distribution, or release gates change |
+| docs/show-hn-preflight.md | Human-authored Show HN worksheet, launch checks, and response conduct | HN guidance or launch process changes |
 | docs/roadmap.md | Implementation phases | Milestone changes |
