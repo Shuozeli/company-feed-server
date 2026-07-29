@@ -4,7 +4,7 @@ ARG PG_SCHEMA_DIFF_VERSION=v1.0.8
 RUN GOBIN=/out go install \
       github.com/stripe/pg-schema-diff/cmd/pg-schema-diff@${PG_SCHEMA_DIFF_VERSION}
 
-FROM rust:1.88-bookworm AS builder
+FROM rust:1.97-bookworm AS builder
 
 WORKDIR /app
 COPY Cargo.toml Cargo.lock ./
