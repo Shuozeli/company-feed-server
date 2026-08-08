@@ -548,6 +548,7 @@ impl Database {
     pub async fn cancel_running_company_news_extractions_for_job(
         &self,
         job_id: Uuid,
+        lease_token: Uuid,
         reason: &str,
     ) -> Result<u64, DatabaseError> {
         let result = sqlx::query(
@@ -556,11 +557,22 @@ impl Database {
             SET
                 status = 'cancelled',
                 finished_at = CURRENT_TIMESTAMP,
-                error = $2
-            WHERE job_id = $1 AND status = 'running'
+                error = $3
+            WHERE
+                job_id = $1
+                AND status = 'running'
+                AND EXISTS (
+                    SELECT 1
+                    FROM jobs
+                    WHERE
+                        id = $1
+                        AND lease_token = $2
+                        AND status = 'running'
+                )
             "#,
         )
         .bind(job_id)
+        .bind(lease_token)
         .bind(reason)
         .execute(self.pool())
         .await?;

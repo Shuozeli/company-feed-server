@@ -208,6 +208,7 @@ fn build_crawler(settings: &AppSettings) -> Result<RssAtomCrawler, CrawlError> {
         request_timeout: settings.crawler_request_timeout,
         max_response_bytes: settings.crawler_max_response_bytes,
         max_items: settings.crawler_max_items,
+        allow_private_networks: settings.news_extraction_allow_private_networks,
         user_agent: settings.public_fetch_user_agent.clone(),
     })
 }
@@ -2292,6 +2293,9 @@ fn default_source_id(company_key: &str, kind: SourceKind, candidate_id: uuid::Uu
 fn validation_error_is_retryable(error: &CrawlError) -> bool {
     match error {
         CrawlError::Client(_) | CrawlError::Request { .. } => true,
+        CrawlError::DnsResolution { .. }
+        | CrawlError::DnsResolutionEmpty { .. }
+        | CrawlError::RemoteAddressUnavailable { .. } => true,
         CrawlError::HttpStatus { status, .. } => *status == 408 || *status == 429 || *status >= 500,
         CrawlError::ResponseTooLarge { .. }
         | CrawlError::InvalidConfig(_)
@@ -2299,7 +2303,11 @@ fn validation_error_is_retryable(error: &CrawlError) -> bool {
         | CrawlError::UnsupportedUrl(_)
         | CrawlError::InvalidFeed(_)
         | CrawlError::ItemMissingUrl
-        | CrawlError::Serialize(_) => false,
+        | CrawlError::Serialize(_)
+        | CrawlError::PrivateNetwork { .. }
+        | CrawlError::InvalidRedirect { .. }
+        | CrawlError::TooManyRedirects { .. }
+        | CrawlError::RedirectDowngrade { .. } => false,
     }
 }
 
@@ -2308,7 +2316,14 @@ fn validation_error_http(error: &CrawlError) -> (Option<i32>, Option<Url>) {
         CrawlError::HttpStatus { url, status } => (Some(i32::from(*status)), Some(url.clone())),
         CrawlError::Request { url, .. }
         | CrawlError::ResponseTooLarge { url, .. }
-        | CrawlError::UnsupportedUrl(url) => (None, Some(url.clone())),
+        | CrawlError::UnsupportedUrl(url)
+        | CrawlError::DnsResolution { url, .. }
+        | CrawlError::DnsResolutionEmpty { url, .. }
+        | CrawlError::PrivateNetwork { url, .. }
+        | CrawlError::RemoteAddressUnavailable { url, .. }
+        | CrawlError::InvalidRedirect { url, .. }
+        | CrawlError::TooManyRedirects { url, .. }
+        | CrawlError::RedirectDowngrade { url, .. } => (None, Some(url.clone())),
         CrawlError::InvalidConfig(_)
         | CrawlError::Client(_)
         | CrawlError::UnsupportedSourceKind(_)
@@ -7641,9 +7656,12 @@ fn recipe_completion_from_report(
 
 fn classify_crawl_error(error: CrawlError) -> JobHandlerError {
     match error {
-        CrawlError::UnsupportedSourceKind(_) | CrawlError::UnsupportedUrl(_) => {
-            JobHandlerError::permanent(error.to_string())
-        }
+        CrawlError::UnsupportedSourceKind(_)
+        | CrawlError::UnsupportedUrl(_)
+        | CrawlError::PrivateNetwork { .. }
+        | CrawlError::InvalidRedirect { .. }
+        | CrawlError::TooManyRedirects { .. }
+        | CrawlError::RedirectDowngrade { .. } => JobHandlerError::permanent(error.to_string()),
         CrawlError::InvalidConfig(_)
         | CrawlError::Client(_)
         | CrawlError::Request { .. }
@@ -7651,7 +7669,12 @@ fn classify_crawl_error(error: CrawlError) -> JobHandlerError {
         | CrawlError::ResponseTooLarge { .. }
         | CrawlError::InvalidFeed(_)
         | CrawlError::ItemMissingUrl
-        | CrawlError::Serialize(_) => JobHandlerError::retryable(error.to_string()),
+        | CrawlError::Serialize(_)
+        | CrawlError::DnsResolution { .. }
+        | CrawlError::DnsResolutionEmpty { .. }
+        | CrawlError::RemoteAddressUnavailable { .. } => {
+            JobHandlerError::retryable(error.to_string())
+        }
     }
 }
 

@@ -2,7 +2,8 @@ use std::time::Instant;
 
 use axum::{
     Json, Router,
-    extract::{Path, Query, State},
+    extract::{FromRequestParts, Path, Query, State},
+    http::request::Parts,
     http::{Method, StatusCode, header},
     response::{Html, IntoResponse, Response},
     routing::{get, post},
@@ -21,7 +22,7 @@ use tower_http::{
     cors::{Any, CorsLayer},
     trace::TraceLayer,
 };
-use tracing::error;
+use tracing::{error, warn};
 use uuid::Uuid;
 
 const DEFAULT_PAGE_LIMIT: u32 = 50;
@@ -35,6 +36,7 @@ pub struct ApiState {
     started_at: Instant,
     job_runner_enabled: bool,
     supported_job_types: Vec<JobType>,
+    operator_api_token: Option<String>,
 }
 
 impl ApiState {
@@ -50,11 +52,60 @@ impl ApiState {
             started_at: Instant::now(),
             job_runner_enabled,
             supported_job_types,
+            operator_api_token: None,
         }
+    }
+
+    pub fn with_operator_api_token(mut self, token: Option<String>) -> Self {
+        self.operator_api_token = token;
+        self
     }
 }
 
+#[derive(Debug)]
+struct OperatorAuth;
+
+impl FromRequestParts<ApiState> for OperatorAuth {
+    type Rejection = ApiError;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &ApiState,
+    ) -> Result<Self, Self::Rejection> {
+        let Some(expected) = state.operator_api_token.as_deref() else {
+            return Ok(Self);
+        };
+        let provided = parts
+            .headers
+            .get(header::AUTHORIZATION)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.strip_prefix("Bearer "))
+            .unwrap_or_default();
+        if !constant_time_eq(expected.as_bytes(), provided.as_bytes()) {
+            return Err(ApiError::Unauthorized);
+        }
+        Ok(Self)
+    }
+}
+
+fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
+    if left.len() != right.len() {
+        return false;
+    }
+    let mut difference = 0u8;
+    for (a, b) in left.iter().zip(right) {
+        difference |= a ^ b;
+    }
+    difference == 0
+}
+
 pub fn router(state: ApiState) -> Router {
+    if state.operator_api_token.is_none() {
+        warn!(
+            "OPERATOR_API_TOKEN is not configured; operator write routes \
+             (validate/activate/reject/batch) are UNAUTHENTICATED"
+        );
+    }
     Router::new()
         .route("/health", get(health))
         .route("/ready", get(readiness))
@@ -324,6 +375,7 @@ async fn list_candidate_decisions(
 }
 
 async fn validate_source_candidate(
+    _operator_auth: OperatorAuth,
     State(state): State<ApiState>,
     Path(candidate_id): Path<Uuid>,
 ) -> Result<(StatusCode, Json<feed_core::Job>), ApiError> {
@@ -335,6 +387,7 @@ async fn validate_source_candidate(
 }
 
 async fn activate_source_candidate(
+    _operator_auth: OperatorAuth,
     State(state): State<ApiState>,
     Path(candidate_id): Path<Uuid>,
     Json(request): Json<DecisionRequest>,
@@ -345,6 +398,7 @@ async fn activate_source_candidate(
 }
 
 async fn reject_source_candidate(
+    _operator_auth: OperatorAuth,
     State(state): State<ApiState>,
     Path(candidate_id): Path<Uuid>,
     Json(request): Json<DecisionRequest>,
@@ -364,6 +418,7 @@ async fn reject_source_candidate(
 }
 
 async fn batch_source_candidate_action(
+    _operator_auth: OperatorAuth,
     State(state): State<ApiState>,
     Json(request): Json<BatchCandidateActionRequest>,
 ) -> Result<Json<BatchCandidateActionResponse>, ApiError> {
@@ -381,6 +436,16 @@ async fn batch_source_candidate_action(
         ));
     }
 
+    let decision = DecisionRequest {
+        actor: request.actor.clone(),
+        reason: request.reason.clone(),
+        public_export_allowed: request.public_export_allowed,
+        freshness_slo_seconds: request.freshness_slo_seconds,
+    };
+    if request.action != BatchAction::Validate {
+        validate_decision_request(&decision)?;
+    }
+
     let mut results = Vec::with_capacity(request.candidate_ids.len());
     for candidate_id in request.candidate_ids {
         let result = match request.action {
@@ -389,17 +454,9 @@ async fn batch_source_candidate_action(
                 .enqueue_candidate_validation(candidate_id, Utc::now(), i16::MAX)
                 .await
                 .map(|_| (true, "validation_queued".to_owned())),
-            BatchAction::Activate => {
-                let decision = DecisionRequest {
-                    actor: request.actor.clone(),
-                    reason: request.reason.clone(),
-                    public_export_allowed: request.public_export_allowed,
-                    freshness_slo_seconds: request.freshness_slo_seconds,
-                };
-                activate_candidate(&state.database, candidate_id, &decision)
-                    .await
-                    .map(|source| (true, format!("activated:{}", source.source_id)))
-            }
+            BatchAction::Activate => activate_candidate(&state.database, candidate_id, &decision)
+                .await
+                .map(|source| (true, format!("activated:{}", source.source_id))),
             BatchAction::Reject => state
                 .database
                 .reject_source_candidate_with_decision(
@@ -418,11 +475,14 @@ async fn batch_source_candidate_action(
                 success,
                 outcome,
             },
-            Err(error) => BatchCandidateActionResult {
-                candidate_id,
-                success: false,
-                outcome: error.to_string(),
-            },
+            Err(error) => {
+                error!(%error, %candidate_id, "batch candidate action failed");
+                BatchCandidateActionResult {
+                    candidate_id,
+                    success: false,
+                    outcome: "action_failed".to_owned(),
+                }
+            }
         });
     }
 
@@ -997,6 +1057,7 @@ impl<T> Page<T> {
 
 #[derive(Debug)]
 enum ApiError {
+    Unauthorized,
     Database(DatabaseError),
     BadRequest(String),
     NotFound(String),
@@ -1011,6 +1072,15 @@ impl From<DatabaseError> for ApiError {
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         match self {
+            Self::Unauthorized => (
+                StatusCode::UNAUTHORIZED,
+                [(header::WWW_AUTHENTICATE, "Bearer")],
+                Json(ErrorResponse {
+                    error: "unauthorized",
+                    message: "a valid bearer token is required",
+                }),
+            )
+                .into_response(),
             Self::BadRequest(message) => (
                 StatusCode::BAD_REQUEST,
                 Json(ErrorResponse {
@@ -1135,11 +1205,14 @@ const REVIEW_DASHBOARD_HTML: &str = r####"<!doctype html>
     .actions button { min-height: 30px; padding: 4px 8px; font-size: 12px; }
     #status { color: var(--muted); min-width: 160px; }
     .section-note { color: var(--muted); margin: 0 0 10px; }
+    .token { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; margin-top: 12px; }
+    input[type="password"] { min-width: 220px; }
     @media (max-width: 720px) {
       header, main { width: min(100% - 18px, 1480px); }
       h1 { font-size: 25px; }
       .controls { align-items: stretch; }
       label, label > input, label > select, .controls > button { width: 100%; }
+      .token input { width: 100%; }
     }
   </style>
 </head>
@@ -1147,6 +1220,11 @@ const REVIEW_DASHBOARD_HTML: &str = r####"<!doctype html>
   <header>
     <h1>Company Source Review</h1>
     <p>AI-assisted discoveries activate provisionally when they contain usable feed items. Disable a source when its company association or content is wrong.</p>
+    <div class="token">
+      <label for="token">Operator API token</label>
+      <input id="token" type="password" placeholder="Paste OPERATOR_API_TOKEN" autocomplete="off">
+      <button id="save-token">Save token</button>
+    </div>
   </header>
   <main>
     <section id="metrics" class="metrics"></section>
@@ -1213,6 +1291,7 @@ const REVIEW_DASHBOARD_HTML: &str = r####"<!doctype html>
     </section>
   </main>
   <script>
+    const TOKEN_KEY = "operatorApiToken";
     const selected = new Set();
     const metrics = [
       ["total_companies", "Companies"],
@@ -1232,11 +1311,21 @@ const REVIEW_DASHBOARD_HTML: &str = r####"<!doctype html>
     ];
 
     async function request(path, options = {}) {
-      const response = await fetch(path, {
-        headers: { "content-type": "application/json" },
-        ...options
-      });
+      const token = localStorage.getItem(TOKEN_KEY) || "";
+      const headers = { "content-type": "application/json", ...(options.headers || {}) };
+      if (token) headers.authorization = `Bearer ${token}`;
+      const response = await fetch(path, { ...options, headers });
       if (!response.ok) {
+        if (response.status === 401) {
+          const input = document.getElementById("token");
+          input.focus();
+          input.select();
+          throw new Error(
+            token
+              ? "The saved operator token was rejected."
+              : "Enter the operator token above, then retry."
+          );
+        }
         const body = await response.json().catch(() => ({}));
         throw new Error(body.message || `${response.status} ${response.statusText}`);
       }
@@ -1248,6 +1337,15 @@ const REVIEW_DASHBOARD_HTML: &str = r####"<!doctype html>
       element.textContent = value ?? "";
       if (className) element.className = className;
       return element;
+    }
+
+    function safeHttpUrl(value) {
+      try {
+        const u = new URL(value);
+        return (u.protocol === "http:" || u.protocol === "https:") ? value : "";
+      } catch {
+        return "";
+      }
     }
 
     function renderMetrics(data) {
@@ -1288,7 +1386,7 @@ const REVIEW_DASHBOARD_HTML: &str = r####"<!doctype html>
 
         const urlCell = text("td", "", "url");
         const link = text("a", candidate.candidate_url);
-        link.href = candidate.candidate_url;
+        link.href = safeHttpUrl(candidate.candidate_url);
         link.target = "_blank";
         link.rel = "noopener noreferrer";
         urlCell.append(link);
@@ -1336,7 +1434,7 @@ const REVIEW_DASHBOARD_HTML: &str = r####"<!doctype html>
         row.append(text("td", item.company_name));
         const sourceCell = text("td", "", "url");
         const link = text("a", source.url);
-        link.href = source.url;
+        link.href = safeHttpUrl(source.url);
         link.target = "_blank";
         link.rel = "noopener noreferrer";
         sourceCell.append(link);
@@ -1385,6 +1483,14 @@ const REVIEW_DASHBOARD_HTML: &str = r####"<!doctype html>
         public_export_allowed: document.getElementById("public-export").checked,
         freshness_slo_seconds: 3600
       };
+    }
+
+    function saveToken() {
+      const input = document.getElementById("token");
+      const token = input.value.trim();
+      if (token) localStorage.setItem(TOKEN_KEY, token);
+      else localStorage.removeItem(TOKEN_KEY);
+      document.getElementById("status").textContent = token ? "Token saved." : "Token cleared.";
     }
 
     async function runSingle(action, candidateId) {
@@ -1450,6 +1556,11 @@ const REVIEW_DASHBOARD_HTML: &str = r####"<!doctype html>
 
     document.getElementById("refresh").addEventListener("click", load);
     document.getElementById("validation-filter").addEventListener("change", load);
+    document.getElementById("save-token").addEventListener("click", saveToken);
+    document.getElementById("token").addEventListener("keydown", event => {
+      if (event.key === "Enter") saveToken();
+    });
+    document.getElementById("token").value = localStorage.getItem(TOKEN_KEY) || "";
     document.getElementById("batch-validate").addEventListener("click", () => runBatch("validate"));
     document.getElementById("batch-activate").addEventListener("click", () => runBatch("activate"));
     document.getElementById("batch-reject").addEventListener("click", () => runBatch("reject"));
@@ -1468,20 +1579,95 @@ const REVIEW_DASHBOARD_HTML: &str = r####"<!doctype html>
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::http::Request;
 
-    #[tokio::test]
-    async fn api_state_records_registered_handlers() {
+    fn test_state() -> ApiState {
         let options = sqlx::postgres::PgPoolOptions::new()
             .connect_lazy("postgresql://unused:unused@localhost/unused")
             .expect("valid test URL");
-        let state = ApiState::new(
+        ApiState::new(
             Database::from_pool(options),
             "test-service",
             true,
             vec![JobType::DiscoverCompany],
-        );
+        )
+    }
+
+    fn request_parts() -> Parts {
+        Request::builder().body(()).unwrap().into_parts().0
+    }
+
+    #[tokio::test]
+    async fn api_state_records_registered_handlers() {
+        let state = test_state();
 
         assert_eq!(state.service_name, "test-service");
         assert_eq!(state.supported_job_types, vec![JobType::DiscoverCompany]);
+        assert!(state.operator_api_token.is_none());
+    }
+
+    #[tokio::test]
+    async fn operator_auth_allows_when_token_unconfigured() {
+        let state = test_state();
+        let mut parts = request_parts();
+        OperatorAuth::from_request_parts(&mut parts, &state)
+            .await
+            .expect("requests must pass when no token is configured");
+    }
+
+    #[tokio::test]
+    async fn operator_auth_rejects_missing_and_wrong_tokens() {
+        let state = test_state().with_operator_api_token(Some("s3cret".to_owned()));
+
+        let mut missing = request_parts();
+        let rejection = OperatorAuth::from_request_parts(&mut missing, &state)
+            .await
+            .expect_err("requests without a bearer token must be rejected")
+            .into_response();
+        assert_eq!(rejection.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(
+            rejection
+                .headers()
+                .get(header::WWW_AUTHENTICATE)
+                .and_then(|value| value.to_str().ok()),
+            Some("Bearer")
+        );
+
+        let mut wrong = Request::builder()
+            .header(header::AUTHORIZATION, "Bearer wrong-token")
+            .body(())
+            .unwrap()
+            .into_parts()
+            .0;
+        let rejection = OperatorAuth::from_request_parts(&mut wrong, &state)
+            .await
+            .expect_err("requests with a wrong token must be rejected")
+            .into_response();
+        assert_eq!(rejection.status(), StatusCode::UNAUTHORIZED);
+        assert!(rejection.headers().get(header::WWW_AUTHENTICATE).is_some());
+    }
+
+    #[tokio::test]
+    async fn operator_auth_accepts_correct_token() {
+        let state = test_state().with_operator_api_token(Some("s3cret".to_owned()));
+        let mut parts = Request::builder()
+            .header(header::AUTHORIZATION, "Bearer s3cret")
+            .body(())
+            .unwrap()
+            .into_parts()
+            .0;
+        OperatorAuth::from_request_parts(&mut parts, &state)
+            .await
+            .expect("the configured token must be accepted");
+    }
+
+    #[test]
+    fn review_dashboard_sanitizes_api_fed_urls() {
+        assert!(REVIEW_DASHBOARD_HTML.contains("function safeHttpUrl"));
+        assert!(
+            REVIEW_DASHBOARD_HTML.contains("link.href = safeHttpUrl(candidate.candidate_url);")
+        );
+        assert!(REVIEW_DASHBOARD_HTML.contains("link.href = safeHttpUrl(source.url);"));
+        assert!(!REVIEW_DASHBOARD_HTML.contains(".innerHTML"));
     }
 }

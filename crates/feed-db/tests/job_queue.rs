@@ -3,7 +3,7 @@
 use std::time::Duration;
 
 use chrono::{Duration as ChronoDuration, Utc};
-use feed_core::{DiscoveredSource, JobSpec, JobStatus, JobType, SourceKind};
+use feed_core::{ClaimedJob, DiscoveredSource, JobSpec, JobStatus, JobType, SourceKind};
 use feed_db::{Database, JobFailureOutcome};
 use tokio::sync::Mutex;
 use url::Url;
@@ -1127,6 +1127,17 @@ async fn retried_crawl_attempts_close_abandoned_crawl_and_recipe_runs() {
         .enqueue_job(&spec)
         .await
         .expect("enqueue crawl job");
+    let claimed = database
+        .claim_job(
+            "crawl-retry-worker",
+            Duration::from_secs(30),
+            &[JobType::CrawlSource],
+            1,
+        )
+        .await
+        .expect("claim crawl job")
+        .expect("crawl job is due");
+    assert_eq!(claimed.job.id, job.id);
 
     let first_crawl_run = database
         .begin_crawl_run(source_id, job.id)
@@ -1164,7 +1175,7 @@ async fn retried_crawl_attempts_close_abandoned_crawl_and_recipe_runs() {
         .expect("begin replacement recipe attempt");
     assert_eq!(
         database
-            .cancel_running_crawl_runs_for_job(job.id, "test shutdown")
+            .cancel_running_crawl_runs_for_job(job.id, claimed.lease_token, "test shutdown")
             .await
             .expect("cancel active crawl attempt"),
         2
@@ -1256,4 +1267,374 @@ async fn expired_final_attempt_is_failed_instead_of_reclaimed() {
         .execute(database.pool())
         .await
         .expect("clean up integration job");
+}
+
+#[tokio::test]
+async fn zombie_cancel_with_stale_lease_preserves_reclaimed_workers_runs() {
+    let _guard = JOB_QUEUE_TEST_LOCK.lock().await;
+
+    let Some(database_url) = std::env::var("TEST_DATABASE_URL").ok() else {
+        eprintln!("TEST_DATABASE_URL is not set; skipping Postgres integration test");
+        return;
+    };
+    let database = Database::connect(&database_url, 5)
+        .await
+        .expect("connect to test Postgres");
+    database.ensure_schema().await.expect("ensure schema");
+
+    let suffix = Uuid::new_v4().simple().to_string();
+    let company_id: Uuid = sqlx::query_scalar(
+        r#"
+        INSERT INTO companies (
+            company_key, name, ownership_status, lifecycle_status,
+            discovery_cadence_seconds
+        )
+        VALUES ($1, 'Zombie Fence Fixture', 'private', 'active', 3600)
+        RETURNING id
+        "#,
+    )
+    .bind(format!("zombie-fence-{}", &suffix[..10]))
+    .fetch_one(database.pool())
+    .await
+    .expect("insert fence fixture company");
+    let source_id: Uuid = sqlx::query_scalar(
+        r#"
+        INSERT INTO sources (source_id, company_id, kind, url, status)
+        VALUES ($1, $2, 'rss', $3, 'approved')
+        RETURNING id
+        "#,
+    )
+    .bind(format!("zombie-fence-source-{}", &suffix[..10]))
+    .bind(company_id)
+    .bind(format!("https://{suffix}.example.test/feed.xml"))
+    .fetch_one(database.pool())
+    .await
+    .expect("insert fence fixture source");
+    let candidate_id: Uuid = sqlx::query_scalar(
+        r#"
+        INSERT INTO source_candidates (
+            company_id, candidate_url, candidate_kind, confidence,
+            evidence, status
+        )
+        VALUES ($1, $2, 'rss', 0.9, $3, 'new')
+        RETURNING id
+        "#,
+    )
+    .bind(company_id)
+    .bind(format!("https://{suffix}.example.test/candidate.xml"))
+    .bind(serde_json::json!({ "fixture": true }))
+    .fetch_one(database.pool())
+    .await
+    .expect("insert fence fixture candidate");
+    let item_external_id = format!("zombie-fence-item-{suffix}");
+    let item_url = format!("https://{suffix}.example.test/articles/{suffix}");
+    sqlx::query(
+        r#"
+        INSERT INTO feed_items (
+            company_id, source_id, external_id, url, canonical_url,
+            title, fetched_at, content_hash, source_kind
+        )
+        VALUES ($1, $2, $3, $4, $4, $5, CURRENT_TIMESTAMP, $6, 'rss')
+        "#,
+    )
+    .bind(company_id)
+    .bind(source_id)
+    .bind(&item_external_id)
+    .bind(&item_url)
+    .bind(format!("Zombie fence item {suffix}"))
+    .bind(format!("sha256:zombie-fence:{suffix}"))
+    .execute(database.pool())
+    .await
+    .expect("insert fence fixture feed item");
+
+    let now = Utc::now();
+    let window_start = now - ChronoDuration::days(31);
+    let window_end = now + ChronoDuration::minutes(1);
+    let mut job_ids = Vec::new();
+
+    let (zombie, successor) = claim_and_reclaim(
+        &database,
+        JobType::DiscoverCompany,
+        &format!("zombie-fence:discovery:{suffix}"),
+    )
+    .await;
+    job_ids.push(zombie.job.id);
+    let discovery_run_a = database
+        .begin_discovery_run(company_id, zombie.job.id)
+        .await
+        .expect("begin discovery run for zombie worker");
+    let discovery_run_b = database
+        .begin_discovery_run(company_id, successor.job.id)
+        .await
+        .expect("begin discovery run for successor worker");
+    assert_eq!(
+        database
+            .cancel_running_discovery_runs_for_job(
+                zombie.job.id,
+                zombie.lease_token,
+                "zombie cancellation",
+            )
+            .await
+            .expect("stale-token discovery cancel"),
+        0
+    );
+    assert_eq!(
+        run_row_status(&database, "discovery_runs", discovery_run_a).await,
+        "running"
+    );
+    assert_eq!(
+        run_row_status(&database, "discovery_runs", discovery_run_b).await,
+        "running"
+    );
+    assert_eq!(
+        database
+            .cancel_running_discovery_runs_for_job(
+                successor.job.id,
+                successor.lease_token,
+                "successor cleanup",
+            )
+            .await
+            .expect("valid discovery cancel"),
+        2
+    );
+
+    let (zombie, successor) = claim_and_reclaim(
+        &database,
+        JobType::ValidateCandidate,
+        &format!("zombie-fence:validation:{suffix}"),
+    )
+    .await;
+    job_ids.push(zombie.job.id);
+    let validation_run_a = database
+        .begin_candidate_validation_run(candidate_id, zombie.job.id)
+        .await
+        .expect("begin validation run for zombie worker");
+    assert_eq!(
+        database
+            .cancel_running_candidate_validations_for_job(
+                zombie.job.id,
+                zombie.lease_token,
+                "zombie cancellation",
+            )
+            .await
+            .expect("stale-token validation cancel"),
+        0
+    );
+    assert_eq!(
+        run_row_status(&database, "candidate_validation_runs", validation_run_a).await,
+        "running"
+    );
+    // Only one running validation run is allowed per candidate; the
+    // successor must retire the zombie's stale run with its own valid
+    // token before it can begin (mirrors the scheduler's retry path).
+    assert_eq!(
+        database
+            .cancel_running_candidate_validations_for_job(
+                successor.job.id,
+                successor.lease_token,
+                "successor cleanup",
+            )
+            .await
+            .expect("valid validation cancel"),
+        1
+    );
+    let validation_run_b = database
+        .begin_candidate_validation_run(candidate_id, successor.job.id)
+        .await
+        .expect("begin validation run for successor worker");
+    assert_eq!(
+        run_row_status(&database, "candidate_validation_runs", validation_run_b).await,
+        "running"
+    );
+
+    let (zombie, successor) = claim_and_reclaim(
+        &database,
+        JobType::CrawlSource,
+        &format!("zombie-fence:crawl:{suffix}"),
+    )
+    .await;
+    job_ids.push(zombie.job.id);
+    let _crawl_run_a = database
+        .begin_crawl_run(source_id, zombie.job.id)
+        .await
+        .expect("begin crawl run for zombie worker");
+    let crawl_run_b = database
+        .begin_crawl_run(source_id, successor.job.id)
+        .await
+        .expect("begin crawl run for successor worker");
+    assert_eq!(
+        database
+            .cancel_running_crawl_runs_for_job(
+                zombie.job.id,
+                zombie.lease_token,
+                "zombie cancellation",
+            )
+            .await
+            .expect("stale-token crawl cancel"),
+        0
+    );
+    assert_eq!(
+        run_row_status(&database, "crawl_runs", crawl_run_b).await,
+        "running"
+    );
+    assert_eq!(
+        database
+            .cancel_running_crawl_runs_for_job(
+                successor.job.id,
+                successor.lease_token,
+                "successor cleanup",
+            )
+            .await
+            .expect("valid crawl cancel"),
+        1
+    );
+
+    let (zombie, successor) = claim_and_reclaim(
+        &database,
+        JobType::CrawlContent,
+        &format!("zombie-fence:content-crawl:{suffix}"),
+    )
+    .await;
+    job_ids.push(zombie.job.id);
+    let attempts_a = database
+        .begin_content_crawl_batch(zombie.job.id, now, now - ChronoDuration::days(30), 1)
+        .await
+        .expect("begin content crawl batch for zombie worker");
+    assert_eq!(attempts_a.len(), 1);
+    let attempts_b = database
+        .begin_content_crawl_batch(successor.job.id, now, now - ChronoDuration::days(30), 1)
+        .await
+        .expect("begin content crawl batch for successor worker");
+    assert_eq!(attempts_b.len(), 1);
+    let attempt_b = attempts_b[0].attempt_id;
+    assert_eq!(
+        database
+            .cancel_running_content_crawl_attempts_for_job(
+                zombie.job.id,
+                zombie.lease_token,
+                "zombie cancellation",
+            )
+            .await
+            .expect("stale-token content crawl cancel"),
+        0
+    );
+    assert_eq!(
+        run_row_status(&database, "content_crawl_attempts", attempt_b).await,
+        "running"
+    );
+    assert_eq!(
+        database
+            .cancel_running_content_crawl_attempts_for_job(
+                successor.job.id,
+                successor.lease_token,
+                "successor cleanup",
+            )
+            .await
+            .expect("valid content crawl cancel"),
+        1
+    );
+
+    let (zombie, successor) = claim_and_reclaim(
+        &database,
+        JobType::ExtractCompanyNews,
+        &format!("zombie-fence:extraction:{suffix}"),
+    )
+    .await;
+    job_ids.push(zombie.job.id);
+    let extraction_run_a = database
+        .begin_company_news_extraction_run(company_id, zombie.job.id, window_start, window_end)
+        .await
+        .expect("begin extraction run for zombie worker");
+    assert_eq!(
+        database
+            .cancel_running_company_news_extractions_for_job(
+                zombie.job.id,
+                zombie.lease_token,
+                "zombie cancellation",
+            )
+            .await
+            .expect("stale-token extraction cancel"),
+        0
+    );
+    assert_eq!(
+        run_row_status(&database, "company_news_extraction_runs", extraction_run_a).await,
+        "running"
+    );
+    // The extraction run row is keyed by job: a re-claim upserts the same
+    // running row instead of creating a second one.
+    let extraction_run_b = database
+        .begin_company_news_extraction_run(company_id, successor.job.id, window_start, window_end)
+        .await
+        .expect("begin extraction run for successor worker");
+    assert_eq!(extraction_run_b, extraction_run_a);
+    assert_eq!(
+        run_row_status(&database, "company_news_extraction_runs", extraction_run_b).await,
+        "running"
+    );
+    assert_eq!(
+        database
+            .cancel_running_company_news_extractions_for_job(
+                successor.job.id,
+                successor.lease_token,
+                "successor cleanup",
+            )
+            .await
+            .expect("valid extraction cancel"),
+        1
+    );
+    assert_eq!(
+        run_row_status(&database, "company_news_extraction_runs", extraction_run_a).await,
+        "cancelled"
+    );
+
+    sqlx::query("DELETE FROM jobs WHERE id = ANY($1::uuid[])")
+        .bind(job_ids)
+        .execute(database.pool())
+        .await
+        .expect("delete fence fixture jobs");
+    sqlx::query("DELETE FROM companies WHERE id = $1")
+        .bind(company_id)
+        .execute(database.pool())
+        .await
+        .expect("delete fence fixture company");
+}
+
+async fn claim_and_reclaim(
+    database: &Database,
+    job_type: JobType,
+    key: &str,
+) -> (ClaimedJob, ClaimedJob) {
+    let first = database
+        .enqueue_job(&JobSpec::new(job_type, key, Utc::now()))
+        .await
+        .expect("enqueue fence fixture job");
+    let zombie = database
+        .claim_job("zombie-worker-a", Duration::from_secs(30), &[job_type], 1)
+        .await
+        .expect("claim fence fixture job")
+        .expect("fence fixture job is due");
+    assert_eq!(zombie.job.id, first.id);
+    sqlx::query(
+        "UPDATE jobs SET lease_until = CURRENT_TIMESTAMP - INTERVAL '1 second' WHERE id = $1",
+    )
+    .bind(zombie.job.id)
+    .execute(database.pool())
+    .await
+    .expect("expire fence fixture lease");
+    let successor = database
+        .claim_job("zombie-worker-b", Duration::from_secs(30), &[job_type], 1)
+        .await
+        .expect("reclaim fence fixture job")
+        .expect("expired fence fixture job is reclaimable");
+    assert_eq!(successor.job.id, zombie.job.id);
+    assert_ne!(successor.lease_token, zombie.lease_token);
+    (zombie, successor)
+}
+
+async fn run_row_status(database: &Database, table: &str, run_id: Uuid) -> String {
+    sqlx::query_scalar(&format!("SELECT status FROM {table} WHERE id = $1"))
+        .bind(run_id)
+        .fetch_one(database.pool())
+        .await
+        .expect("read fence fixture run status")
 }

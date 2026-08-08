@@ -453,12 +453,43 @@ async fn concurrent_content_batches_claim_disjoint_items() {
         .collect::<HashSet<_>>();
     assert!(first_ids.is_disjoint(&second_ids));
 
+    let first_claim = database
+        .claim_job(
+            "content-crawl-fixture-worker",
+            Duration::from_secs(30),
+            &[JobType::CrawlContent],
+            1,
+        )
+        .await
+        .expect("claim first fixture job")
+        .expect("first fixture job is due");
+    let second_claim = database
+        .claim_job(
+            "content-crawl-fixture-worker",
+            Duration::from_secs(30),
+            &[JobType::CrawlContent],
+            1,
+        )
+        .await
+        .expect("claim second fixture job")
+        .expect("second fixture job is due");
+    assert_eq!(first_claim.job.id, first_job);
+    assert_eq!(second_claim.job.id, second_job);
+
     database
-        .cancel_running_content_crawl_attempts_for_job(first_job, "fixture cleanup")
+        .cancel_running_content_crawl_attempts_for_job(
+            first_claim.job.id,
+            first_claim.lease_token,
+            "fixture cleanup",
+        )
         .await
         .expect("cancel first fixture batch");
     database
-        .cancel_running_content_crawl_attempts_for_job(second_job, "fixture cleanup")
+        .cancel_running_content_crawl_attempts_for_job(
+            second_claim.job.id,
+            second_claim.lease_token,
+            "fixture cleanup",
+        )
         .await
         .expect("cancel second fixture batch");
     sqlx::query("DELETE FROM companies WHERE id = $1")

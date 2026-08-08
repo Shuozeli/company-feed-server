@@ -71,7 +71,8 @@ async fn main() -> Result<()> {
         "feed-discovery-worker",
         settings.run_jobs,
         supported_job_types,
-    );
+    )
+    .with_operator_api_token(settings.operator_api_token);
     let listener = tokio::net::TcpListener::bind(settings.discovery_worker_bind_addr)
         .await
         .with_context(|| {

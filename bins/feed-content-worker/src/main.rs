@@ -75,7 +75,8 @@ async fn main() -> Result<()> {
         "feed-content-worker",
         jobs_enabled,
         supported_job_types,
-    );
+    )
+    .with_operator_api_token(settings.operator_api_token);
     let listener = tokio::net::TcpListener::bind(settings.content_crawl_worker_bind_addr)
         .await
         .with_context(|| {

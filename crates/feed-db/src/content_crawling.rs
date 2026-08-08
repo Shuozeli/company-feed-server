@@ -552,6 +552,7 @@ impl Database {
     pub async fn cancel_running_content_crawl_attempts_for_job(
         &self,
         job_id: Uuid,
+        lease_token: Uuid,
         reason: &str,
     ) -> Result<u64, DatabaseError> {
         let mut transaction = self.pool().begin().await?;
@@ -561,15 +562,26 @@ impl Database {
             UPDATE content_crawl_attempts
             SET
                 status = 'cancelled',
-                finished_at = $2,
+                finished_at = $3,
                 retryable = true,
                 error_reason = 'job_cancelled',
-                error = $3
-            WHERE job_id = $1 AND status = 'running'
+                error = $4
+            WHERE
+                job_id = $1
+                AND status = 'running'
+                AND EXISTS (
+                    SELECT 1
+                    FROM jobs
+                    WHERE
+                        id = $1
+                        AND lease_token = $2
+                        AND status = 'running'
+                )
             RETURNING feed_item_id
             "#,
         )
         .bind(job_id)
+        .bind(lease_token)
         .bind(cancelled_at)
         .bind(reason)
         .fetch_all(&mut *transaction)

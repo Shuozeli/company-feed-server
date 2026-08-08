@@ -66,7 +66,8 @@ async fn main() -> Result<()> {
         "feed-news-extraction-worker",
         settings.news_extraction_run_jobs,
         supported_job_types,
-    );
+    )
+    .with_operator_api_token(settings.operator_api_token);
     let listener = tokio::net::TcpListener::bind(settings.news_extraction_worker_bind_addr)
         .await
         .with_context(|| {

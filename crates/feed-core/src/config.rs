@@ -294,6 +294,7 @@ pub struct AppSettings {
     pub crawler_request_timeout: Duration,
     pub crawler_max_response_bytes: usize,
     pub crawler_max_items: usize,
+    pub operator_api_token: Option<String>,
 }
 
 impl AppSettings {
@@ -637,6 +638,9 @@ impl AppSettings {
                 "crawler timeout, response size, and item limits must be positive".to_owned(),
             ));
         }
+        let operator_api_token = env::var("OPERATOR_API_TOKEN")
+            .ok()
+            .filter(|value| !value.trim().is_empty());
 
         Ok(Self {
             database_url,
@@ -712,6 +716,7 @@ impl AppSettings {
             crawler_request_timeout,
             crawler_max_response_bytes,
             crawler_max_items,
+            operator_api_token,
         })
     }
 }

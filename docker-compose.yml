@@ -51,6 +51,7 @@ services:
       RUST_LOG: ${RUST_LOG:-info,feed_server=debug}
       PUBLIC_FETCH_USER_AGENT: ${PUBLIC_FETCH_USER_AGENT:-CompanyFeedServer/0.1 (+https://github.com/Shuozeli/company-feed-server)}
       BIND_ADDR: 0.0.0.0:8080
+      OPERATOR_API_TOKEN: ${OPERATOR_API_TOKEN:-}
       COMPANIES_CONFIG: ${COMPANIES_CONFIG:-/app/configs/companies.yaml}
       EXPORT_TARGETS_CONFIG: ${EXPORT_TARGETS_CONFIG:-/app/configs/export_targets.yaml}
     ports:
@@ -80,6 +81,7 @@ services:
       RUST_LOG: ${RUST_LOG:-info,feed_worker=debug}
       PUBLIC_FETCH_USER_AGENT: ${PUBLIC_FETCH_USER_AGENT:-CompanyFeedServer/0.1 (+https://github.com/Shuozeli/company-feed-server)}
       WORKER_BIND_ADDR: 0.0.0.0:8081
+      OPERATOR_API_TOKEN: ${OPERATOR_API_TOKEN:-}
       RUN_JOBS: ${WORKER_RUN_JOBS:-true}
       SCHEDULE_JOBS: ${WORKER_SCHEDULE_JOBS:-true}
       COMPANIES_CONFIG: ${COMPANIES_CONFIG:-/app/configs/companies.yaml}
@@ -116,6 +118,7 @@ services:
       RUST_LOG: ${RUST_LOG:-info,feed_discovery_worker=debug}
       PUBLIC_FETCH_USER_AGENT: ${PUBLIC_FETCH_USER_AGENT:-CompanyFeedServer/0.1 (+https://github.com/Shuozeli/company-feed-server)}
       DISCOVERY_WORKER_BIND_ADDR: 0.0.0.0:8082
+      OPERATOR_API_TOKEN: ${OPERATOR_API_TOKEN:-}
       RUN_JOBS: ${DISCOVERY_RUN_JOBS:-true}
       SCHEDULE_JOBS: ${DISCOVERY_SCHEDULE_JOBS:-true}
       DISCOVERY_QUEUE_TARGET: ${DISCOVERY_QUEUE_TARGET:-100}
@@ -154,6 +157,7 @@ services:
       RUST_LOG: ${RUST_LOG:-info,feed_validation_worker=debug}
       PUBLIC_FETCH_USER_AGENT: ${PUBLIC_FETCH_USER_AGENT:-CompanyFeedServer/0.1 (+https://github.com/Shuozeli/company-feed-server)}
       VALIDATION_WORKER_BIND_ADDR: 0.0.0.0:8083
+      OPERATOR_API_TOKEN: ${OPERATOR_API_TOKEN:-}
       RUN_JOBS: ${VALIDATION_RUN_JOBS:-true}
       SCHEDULE_JOBS: ${VALIDATION_SCHEDULE_JOBS:-false}
       VALIDATION_QUEUE_TARGET: ${VALIDATION_QUEUE_TARGET:-100}
@@ -189,6 +193,7 @@ services:
       RUST_LOG: ${RUST_LOG:-info,feed_news_extraction_worker=debug}
       PUBLIC_FETCH_USER_AGENT: ${PUBLIC_FETCH_USER_AGENT:-CompanyFeedServer/0.1 (+https://github.com/Shuozeli/company-feed-server)}
       NEWS_EXTRACTION_WORKER_BIND_ADDR: 0.0.0.0:8084
+      OPERATOR_API_TOKEN: ${OPERATOR_API_TOKEN:-}
       RUN_JOBS: ${NEWS_EXTRACTION_RUN_JOBS:-true}
       NEWS_EXTRACTION_RUN_JOBS: ${NEWS_EXTRACTION_RUN_JOBS:-true}
       NEWS_EXTRACTION_JOB_CONCURRENCY: ${NEWS_EXTRACTION_JOB_CONCURRENCY:-1}
@@ -238,6 +243,7 @@ services:
       RUST_LOG: ${RUST_LOG:-info,feed_content_worker=debug}
       PUBLIC_FETCH_USER_AGENT: ${PUBLIC_FETCH_USER_AGENT:-CompanyFeedServer/0.1 (+https://github.com/Shuozeli/company-feed-server)}
       CONTENT_CRAWL_WORKER_BIND_ADDR: 0.0.0.0:8085
+      OPERATOR_API_TOKEN: ${OPERATOR_API_TOKEN:-}
       CONTENT_CRAWL_ENABLED: ${CONTENT_CRAWL_ENABLED:-true}
       CONTENT_CRAWL_RUN_JOBS: ${CONTENT_CRAWL_RUN_JOBS:-true}
       CONTENT_CRAWL_JOB_CONCURRENCY: ${CONTENT_CRAWL_JOB_CONCURRENCY:-1}

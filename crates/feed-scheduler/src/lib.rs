@@ -264,17 +264,11 @@ impl<H: JobHandler> JobRunner<H> {
         let handler_result = loop {
             tokio::select! {
                 _ = shutdown.cancelled() => {
-                    let retry_at = Utc::now();
-                    let outcome = self.database.record_job_failure(
-                        job_id,
-                        claimed.lease_token,
-                        "worker shutting down",
-                        Some(retry_at),
-                    ).await?;
                     if claimed.job.job_type == JobType::DiscoverCompany {
                         self.database
                             .cancel_running_discovery_runs_for_job(
                                 job_id,
+                                claimed.lease_token,
                                 "worker shut down during discovery",
                             )
                             .await?;
@@ -282,6 +276,7 @@ impl<H: JobHandler> JobRunner<H> {
                         self.database
                             .cancel_running_candidate_validations_for_job(
                                 job_id,
+                                claimed.lease_token,
                                 "worker shut down during candidate validation",
                             )
                             .await?;
@@ -289,6 +284,7 @@ impl<H: JobHandler> JobRunner<H> {
                         self.database
                             .cancel_running_crawl_runs_for_job(
                                 job_id,
+                                claimed.lease_token,
                                 "worker shut down during source crawl",
                             )
                             .await?;
@@ -296,6 +292,7 @@ impl<H: JobHandler> JobRunner<H> {
                         self.database
                             .cancel_running_content_crawl_attempts_for_job(
                                 job_id,
+                                claimed.lease_token,
                                 "worker shut down during content crawl",
                             )
                             .await?;
@@ -303,10 +300,18 @@ impl<H: JobHandler> JobRunner<H> {
                         self.database
                             .cancel_running_company_news_extractions_for_job(
                                 job_id,
+                                claimed.lease_token,
                                 "worker shut down during company news extraction",
                             )
                             .await?;
                     }
+                    let retry_at = Utc::now();
+                    let outcome = self.database.record_job_failure(
+                        job_id,
+                        claimed.lease_token,
+                        "worker shutting down",
+                        Some(retry_at),
+                    ).await?;
                     return Ok(match outcome {
                         JobFailureOutcome::Retrying { run_after } => {
                             JobRunOutcome::ShutdownRequeued { job_id, run_after }
@@ -327,6 +332,7 @@ impl<H: JobHandler> JobRunner<H> {
                             self.database
                                 .cancel_running_discovery_runs_for_job(
                                     job_id,
+                                    claimed.lease_token,
                                     "worker lost its lease during discovery",
                                 )
                                 .await?;
@@ -334,6 +340,7 @@ impl<H: JobHandler> JobRunner<H> {
                             self.database
                                 .cancel_running_candidate_validations_for_job(
                                     job_id,
+                                    claimed.lease_token,
                                     "worker lost its lease during candidate validation",
                                 )
                                 .await?;
@@ -341,6 +348,7 @@ impl<H: JobHandler> JobRunner<H> {
                             self.database
                                 .cancel_running_crawl_runs_for_job(
                                     job_id,
+                                    claimed.lease_token,
                                     "worker lost its lease during source crawl",
                                 )
                                 .await?;
@@ -348,6 +356,7 @@ impl<H: JobHandler> JobRunner<H> {
                             self.database
                                 .cancel_running_content_crawl_attempts_for_job(
                                     job_id,
+                                    claimed.lease_token,
                                     "worker lost its lease during content crawl",
                                 )
                                 .await?;
@@ -355,6 +364,7 @@ impl<H: JobHandler> JobRunner<H> {
                             self.database
                                 .cancel_running_company_news_extractions_for_job(
                                     job_id,
+                                    claimed.lease_token,
                                     "worker lost its lease during company news extraction",
                                 )
                                 .await?;
@@ -380,10 +390,29 @@ impl<H: JobHandler> JobRunner<H> {
                 }
             }
             Err(handler_error) => {
-                if claimed.job.job_type == JobType::CrawlSource {
+                if claimed.job.job_type == JobType::DiscoverCompany {
+                    self.database
+                        .cancel_running_discovery_runs_for_job(
+                            job_id,
+                            claimed.lease_token,
+                            &format!("discovery handler returned an error: {handler_error}"),
+                        )
+                        .await?;
+                } else if claimed.job.job_type == JobType::ValidateCandidate {
+                    self.database
+                        .cancel_running_candidate_validations_for_job(
+                            job_id,
+                            claimed.lease_token,
+                            &format!(
+                                "candidate validation handler returned an error: {handler_error}"
+                            ),
+                        )
+                        .await?;
+                } else if claimed.job.job_type == JobType::CrawlSource {
                     self.database
                         .cancel_running_crawl_runs_for_job(
                             job_id,
+                            claimed.lease_token,
                             &format!("source crawl handler returned an error: {handler_error}"),
                         )
                         .await?;
@@ -391,6 +420,7 @@ impl<H: JobHandler> JobRunner<H> {
                     self.database
                         .cancel_running_content_crawl_attempts_for_job(
                             job_id,
+                            claimed.lease_token,
                             &format!("content crawl handler returned an error: {handler_error}"),
                         )
                         .await?;
@@ -398,6 +428,7 @@ impl<H: JobHandler> JobRunner<H> {
                     self.database
                         .cancel_running_company_news_extractions_for_job(
                             job_id,
+                            claimed.lease_token,
                             &format!(
                                 "company news extraction handler returned an error: {handler_error}"
                             ),

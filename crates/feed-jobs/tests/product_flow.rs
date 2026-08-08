@@ -180,6 +180,7 @@ async fn public_feed_becomes_api_item_and_git_archive() {
         database.clone(),
         RssAtomCrawler::new(RssAtomCrawlerConfig {
             request_timeout: Duration::from_secs(5),
+            allow_private_networks: true,
             ..RssAtomCrawlerConfig::default()
         })
         .expect("validation crawler"),
@@ -239,6 +240,7 @@ async fn public_feed_becomes_api_item_and_git_archive() {
         database.clone(),
         RssAtomCrawler::new(RssAtomCrawlerConfig {
             request_timeout: Duration::from_secs(5),
+            allow_private_networks: true,
             ..RssAtomCrawlerConfig::default()
         })
         .expect("crawler"),
@@ -1113,6 +1115,7 @@ async fn manual_news_import_fetches_and_persists_cited_public_articles() {
         database.clone(),
         RssAtomCrawler::new(RssAtomCrawlerConfig {
             request_timeout: Duration::from_secs(5),
+            allow_private_networks: true,
             ..RssAtomCrawlerConfig::default()
         })
         .expect("feed crawler"),

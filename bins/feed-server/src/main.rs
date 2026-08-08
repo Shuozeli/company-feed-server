@@ -34,7 +34,8 @@ async fn main() -> Result<()> {
     );
 
     let shutdown = CancellationToken::new();
-    let state = ApiState::new(database.clone(), "feed-server", false, Vec::new());
+    let state = ApiState::new(database.clone(), "feed-server", false, Vec::new())
+        .with_operator_api_token(settings.operator_api_token);
     let listener = tokio::net::TcpListener::bind(settings.bind_addr)
         .await
         .with_context(|| format!("bind HTTP server to {}", settings.bind_addr))?;

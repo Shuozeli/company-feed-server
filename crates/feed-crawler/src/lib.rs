@@ -31,6 +31,7 @@ pub struct RssAtomCrawlerConfig {
     pub request_timeout: Duration,
     pub max_response_bytes: usize,
     pub max_items: usize,
+    pub allow_private_networks: bool,
     pub user_agent: String,
 }
 
@@ -40,6 +41,7 @@ impl Default for RssAtomCrawlerConfig {
             request_timeout: Duration::from_secs(20),
             max_response_bytes: 8 * 1024 * 1024,
             max_items: 500,
+            allow_private_networks: false,
             user_agent: DEFAULT_PUBLIC_FETCH_USER_AGENT.to_owned(),
         }
     }
@@ -61,7 +63,8 @@ impl RssAtomCrawler {
         let client = Client::builder()
             .connect_timeout(config.request_timeout)
             .timeout(config.request_timeout)
-            .redirect(Policy::limited(5))
+            .redirect(Policy::none())
+            .no_proxy()
             .user_agent(&config.user_agent)
             .build()?;
         Ok(Self { client, config })
@@ -72,49 +75,84 @@ impl RssAtomCrawler {
             return Err(CrawlError::UnsupportedSourceKind(source.kind));
         }
         validate_url(&source.url)?;
-        let response = self
-            .client
-            .get(source.url.clone())
-            .send()
-            .await
-            .map_err(|error| CrawlError::Request {
-                url: source.url.clone(),
-                message: error.to_string(),
-            })?;
-        if !response.status().is_success() {
-            return Err(CrawlError::HttpStatus {
-                url: source.url.clone(),
-                status: response.status().as_u16(),
-            });
-        }
-        if response
-            .content_length()
-            .is_some_and(|length| length > self.config.max_response_bytes as u64)
-        {
-            return Err(CrawlError::ResponseTooLarge {
-                url: source.url.clone(),
-                limit: self.config.max_response_bytes,
-            });
-        }
-        let final_url = response.url().clone();
-        validate_url(&final_url)?;
-        let mut bytes = Vec::new();
-        let mut stream = response.bytes_stream();
-        while let Some(chunk) = stream.next().await {
-            let chunk = chunk.map_err(|error| CrawlError::Request {
-                url: final_url.clone(),
-                message: error.to_string(),
-            })?;
-            if bytes.len().saturating_add(chunk.len()) > self.config.max_response_bytes {
+        let mut current_url = source.url.clone();
+        for redirect_count in 0..=5 {
+            validate_url(&current_url)?;
+            if !self.config.allow_private_networks {
+                validate_feed_resolved_target(&current_url).await?;
+            }
+            let response = self
+                .client
+                .get(current_url.clone())
+                .send()
+                .await
+                .map_err(|error| CrawlError::Request {
+                    url: current_url.clone(),
+                    message: error.to_string(),
+                })?;
+            if !self.config.allow_private_networks {
+                let remote_address =
+                    response
+                        .remote_addr()
+                        .ok_or_else(|| CrawlError::RemoteAddressUnavailable {
+                            url: current_url.clone(),
+                        })?;
+                if !is_public_ip(remote_address.ip()) {
+                    return Err(CrawlError::PrivateNetwork {
+                        url: current_url,
+                        address: remote_address.ip(),
+                    });
+                }
+            }
+            if response.status().is_redirection() {
+                if redirect_count == 5 {
+                    return Err(CrawlError::TooManyRedirects { url: current_url });
+                }
+                let location = response
+                    .headers()
+                    .get(LOCATION)
+                    .and_then(|value| value.to_str().ok())
+                    .ok_or_else(|| CrawlError::InvalidRedirect {
+                        url: current_url.clone(),
+                    })?;
+                current_url = resolve_feed_redirect(&current_url, location)?;
+                continue;
+            }
+            if !response.status().is_success() {
+                return Err(CrawlError::HttpStatus {
+                    url: current_url,
+                    status: response.status().as_u16(),
+                });
+            }
+            if response
+                .content_length()
+                .is_some_and(|length| length > self.config.max_response_bytes as u64)
+            {
                 return Err(CrawlError::ResponseTooLarge {
-                    url: final_url,
+                    url: current_url,
                     limit: self.config.max_response_bytes,
                 });
             }
-            bytes.extend_from_slice(&chunk);
-        }
+            let final_url = current_url;
+            let mut bytes = Vec::new();
+            let mut stream = response.bytes_stream();
+            while let Some(chunk) = stream.next().await {
+                let chunk = chunk.map_err(|error| CrawlError::Request {
+                    url: final_url.clone(),
+                    message: error.to_string(),
+                })?;
+                if bytes.len().saturating_add(chunk.len()) > self.config.max_response_bytes {
+                    return Err(CrawlError::ResponseTooLarge {
+                        url: final_url,
+                        limit: self.config.max_response_bytes,
+                    });
+                }
+                bytes.extend_from_slice(&chunk);
+            }
 
-        parse_feed_body(&final_url, &bytes, self.config.max_items)
+            return parse_feed_body(&final_url, &bytes, self.config.max_items);
+        }
+        unreachable!("feed redirect loop returns after success or the sixth redirect")
     }
 }
 
@@ -6487,16 +6525,21 @@ fn resolve_article_redirect(current_url: &Url, location: &str) -> Result<Url, Ar
             .map_err(|_| ArticlePageError::InvalidRedirect {
                 url: current_url.clone(),
             })?;
-    if current_url.scheme() == "https"
-        && next_url.scheme() == "http"
-        && current_url.host_str() == next_url.host_str()
-        && current_url.port() == next_url.port()
-    {
-        next_url
-            .set_scheme("https")
-            .map_err(|_| ArticlePageError::InvalidRedirect {
+    if current_url.scheme() == "https" && next_url.scheme() == "http" {
+        if current_url.host_str() == next_url.host_str()
+            && current_url.port_or_known_default() == next_url.port_or_known_default()
+        {
+            next_url
+                .set_scheme("https")
+                .map_err(|_| ArticlePageError::InvalidRedirect {
+                    url: current_url.clone(),
+                })?;
+        } else if current_url.host_str() == next_url.host_str() {
+            return Err(ArticlePageError::RedirectDowngrade {
                 url: current_url.clone(),
-            })?;
+                target: Box::new(next_url),
+            });
+        }
     }
     Ok(next_url)
 }
@@ -6586,6 +6629,72 @@ fn is_public_ipv6(address: Ipv6Addr) -> bool {
         || (segments[0] == 0x0064 && segments[1] == 0xff9b && segments[2] == 1))
 }
 
+fn resolve_feed_redirect(current_url: &Url, location: &str) -> Result<Url, CrawlError> {
+    let mut next_url = current_url
+        .join(location)
+        .map_err(|_| CrawlError::InvalidRedirect {
+            url: current_url.clone(),
+        })?;
+    if current_url.scheme() == "https" && next_url.scheme() == "http" {
+        if current_url.host_str() == next_url.host_str()
+            && current_url.port_or_known_default() == next_url.port_or_known_default()
+        {
+            next_url
+                .set_scheme("https")
+                .map_err(|_| CrawlError::InvalidRedirect {
+                    url: current_url.clone(),
+                })?;
+        } else {
+            return Err(CrawlError::RedirectDowngrade {
+                url: current_url.clone(),
+                target: Box::new(next_url),
+            });
+        }
+    }
+    Ok(next_url)
+}
+
+async fn validate_feed_resolved_target(url: &Url) -> Result<(), CrawlError> {
+    let Some(host) = url.host() else {
+        return Err(CrawlError::UnsupportedUrl(url.clone()));
+    };
+    match host {
+        url::Host::Ipv4(address) => validate_feed_public_address(url, IpAddr::V4(address)),
+        url::Host::Ipv6(address) => validate_feed_public_address(url, IpAddr::V6(address)),
+        url::Host::Domain(host) => {
+            let port = url
+                .port_or_known_default()
+                .ok_or_else(|| CrawlError::UnsupportedUrl(url.clone()))?;
+            let addresses = tokio::net::lookup_host((host, port))
+                .await
+                .map_err(|source| CrawlError::DnsResolution {
+                    url: url.clone(),
+                    source,
+                })?
+                .map(|address| address.ip())
+                .collect::<Vec<_>>();
+            if addresses.is_empty() {
+                return Err(CrawlError::DnsResolutionEmpty { url: url.clone() });
+            }
+            for address in addresses {
+                validate_feed_public_address(url, address)?;
+            }
+            Ok(())
+        }
+    }
+}
+
+fn validate_feed_public_address(url: &Url, address: IpAddr) -> Result<(), CrawlError> {
+    if is_public_ip(address) {
+        Ok(())
+    } else {
+        Err(CrawlError::PrivateNetwork {
+            url: url.clone(),
+            address,
+        })
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum ArticlePageError {
     #[error("invalid article crawler configuration: {0}")]
@@ -6612,6 +6721,8 @@ pub enum ArticlePageError {
     RemoteAddressUnavailable { url: Url },
     #[error("redirect from {url} is missing or invalid")]
     InvalidRedirect { url: Url },
+    #[error("redirect from {url} downgrades to insecure target {target}")]
+    RedirectDowngrade { url: Url, target: Box<Url> },
     #[error("too many redirects while fetching {url}")]
     TooManyRedirects { url: Url },
     #[error("unsupported content type {content_type} for {url}")]
@@ -6702,6 +6813,7 @@ impl ArticlePageError {
             | Self::ResponseTooLarge { .. }
             | Self::PrivateNetwork { .. }
             | Self::InvalidRedirect { .. }
+            | Self::RedirectDowngrade { .. }
             | Self::TooManyRedirects { .. }
             | Self::UnsupportedContent { .. }
             | Self::MissingArticleSignal { .. }
@@ -6730,6 +6842,7 @@ impl ArticlePageError {
             Self::PrivateNetwork { .. } => "private_network",
             Self::RemoteAddressUnavailable { .. } => "remote_address_unavailable",
             Self::InvalidRedirect { .. } => "invalid_redirect",
+            Self::RedirectDowngrade { .. } => "redirect_downgrade",
             Self::TooManyRedirects { .. } => "too_many_redirects",
             Self::UnsupportedContent { .. } => "unsupported_content",
             Self::MissingArticleSignal { .. } => "missing_article_signal",
@@ -6908,6 +7021,20 @@ pub enum CrawlError {
     ItemMissingUrl,
     #[error("failed to serialize feed entry: {0}")]
     Serialize(#[from] serde_json::Error),
+    #[error("DNS resolution failed for {url}: {source}")]
+    DnsResolution { url: Url, source: std::io::Error },
+    #[error("DNS resolution returned no addresses for {url}")]
+    DnsResolutionEmpty { url: Url },
+    #[error("URL {url} resolves or connects to disallowed address {address}")]
+    PrivateNetwork { url: Url, address: IpAddr },
+    #[error("remote address was unavailable for {url}")]
+    RemoteAddressUnavailable { url: Url },
+    #[error("redirect from {url} is missing or invalid")]
+    InvalidRedirect { url: Url },
+    #[error("too many redirects while fetching {url}")]
+    TooManyRedirects { url: Url },
+    #[error("redirect from {url} downgrades to insecure target {target}")]
+    RedirectDowngrade { url: Url, target: Box<Url> },
 }
 
 #[cfg(test)]
@@ -6985,43 +7112,14 @@ mod tests {
         assert!(batch.items[0].summary_html.as_deref().is_some());
     }
 
-    #[tokio::test]
-    async fn fetches_a_feed_over_http() {
-        use axum::{Router, http::header, routing::get};
-
-        let app = Router::new().route(
-            "/feed",
-            get(|| async {
-                (
-                    [(header::CONTENT_TYPE, "application/atom+xml")],
-                    r#"<?xml version="1.0"?>
-                    <feed xmlns="http://www.w3.org/2005/Atom">
-                      <title>Acme</title><id>https://example.com/feed</id>
-                      <updated>2025-07-16T00:00:00Z</updated>
-                      <entry><title>Launch</title><id>launch-2</id>
-                      <updated>2025-07-16T00:00:00Z</updated>
-                      <link href="https://example.com/launch-2"/>
-                      <content type="html">&lt;p&gt;Body&lt;/p&gt;</content></entry>
-                    </feed>"#,
-                )
-            }),
-        );
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("bind fixture");
-        let address = listener.local_addr().expect("fixture address");
-        let task = tokio::spawn(async move {
-            axum::serve(listener, app)
-                .await
-                .expect("serve crawler fixture");
-        });
+    fn test_source(kind: SourceKind, url: Url) -> Source {
         let now = Utc::now();
-        let source = Source {
+        Source {
             id: Uuid::new_v4(),
             source_id: "acme-feed".to_owned(),
             company_id: Uuid::new_v4(),
-            kind: SourceKind::Rss,
-            url: Url::parse(&format!("http://{address}/feed")).expect("fixture URL"),
+            kind,
+            url,
             status: feed_core::SourceStatus::Approved,
             freshness_slo_seconds: 3600,
             browser_required: false,
@@ -7030,14 +7128,94 @@ mod tests {
             metadata: Value::Object(Default::default()),
             created_at: now,
             updated_at: now,
-        };
-        let crawler = RssAtomCrawler::new(RssAtomCrawlerConfig::default()).expect("build crawler");
-        let batch = crawler.crawl(&source).await.expect("crawl fixture");
-        assert_eq!(batch.detected_source_kind, SourceKind::Atom);
-        assert_eq!(batch.items.len(), 1);
-        assert_eq!(batch.items[0].external_id.as_deref(), Some("launch-2"));
+        }
+    }
 
-        task.abort();
+    #[tokio::test]
+    async fn rejects_loopback_metadata_and_private_source_addresses() {
+        let crawler = RssAtomCrawler::new(RssAtomCrawlerConfig::default()).expect("build crawler");
+        for host in [
+            "127.0.0.1",
+            "127.0.0.2",
+            "169.254.169.254",
+            "10.0.0.5",
+            "192.168.1.10",
+            "172.16.0.5",
+            "0.0.0.0",
+        ] {
+            let source = test_source(
+                SourceKind::Rss,
+                Url::parse(&format!("http://{host}/feed")).expect("fixture URL"),
+            );
+            let error = crawler
+                .crawl(&source)
+                .await
+                .expect_err("private source address must be rejected");
+            assert!(
+                matches!(error, CrawlError::PrivateNetwork { .. }),
+                "{host} must be rejected as a private address, got {error}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn rejects_internal_hostnames_via_dns_resolution() {
+        let crawler = RssAtomCrawler::new(RssAtomCrawlerConfig::default()).expect("build crawler");
+        let source = test_source(
+            SourceKind::Rss,
+            Url::parse("http://localhost/feed").expect("fixture URL"),
+        );
+        let error = crawler
+            .crawl(&source)
+            .await
+            .expect_err("internal hostname must be rejected");
+        assert!(
+            matches!(
+                error,
+                CrawlError::PrivateNetwork { .. } | CrawlError::DnsResolution { .. }
+            ),
+            "internal hostname must be rejected before connecting, got {error}"
+        );
+    }
+
+    #[test]
+    fn feed_redirect_resolution_repairs_same_host_same_effective_port_https_downgrades() {
+        let current = Url::parse("https://example.com/feed.xml").expect("current feed URL");
+        let explicit_port = resolve_feed_redirect(&current, "http://example.com:443/feed.xml")
+            .expect("explicit default port redirect is repaired");
+        assert_eq!(explicit_port.as_str(), "https://example.com/feed.xml");
+    }
+
+    #[test]
+    fn feed_redirect_resolution_rejects_https_downgrades() {
+        let current = Url::parse("https://example.com/feed.xml").expect("current feed URL");
+        for location in [
+            "http://example.com/feed.xml",
+            "http://example.com:80/feed.xml",
+            "http://cdn.example.com/feed.xml",
+        ] {
+            let error = resolve_feed_redirect(&current, location)
+                .expect_err("https downgrade must be rejected");
+            assert!(
+                matches!(error, CrawlError::RedirectDowngrade { .. }),
+                "{location} must be rejected as a downgrade, got {error}"
+            );
+        }
+
+        let upgrade = resolve_feed_redirect(&current, "https://example.com/feed.xml")
+            .expect("upgrade redirect is allowed");
+        assert_eq!(upgrade.as_str(), "https://example.com/feed.xml");
+    }
+
+    #[tokio::test]
+    async fn rejects_redirect_targets_that_resolve_to_private_addresses() {
+        let current = Url::parse("http://example.com/feed.xml").expect("current feed URL");
+        let redirected = resolve_feed_redirect(&current, "http://127.0.0.1:8080/feed.xml")
+            .expect("redirect resolves structurally");
+        let error = validate_feed_resolved_target(&redirected)
+            .await
+            .expect_err("private redirect target must be rejected");
+        assert!(matches!(error, CrawlError::PrivateNetwork { .. }));
     }
 
     #[test]
@@ -7289,16 +7467,12 @@ mod tests {
     }
 
     #[test]
-    fn repairs_only_same_host_https_downgrade_redirects() {
+    fn rejects_same_host_implicit_port_https_downgrades() {
         let current =
             Url::parse("https://example.com/blog/company-update").expect("current article URL");
-        let repaired =
-            resolve_article_redirect(&current, "http://example.com/blog/company-update/")
-                .expect("same-host redirect");
-        assert_eq!(
-            repaired.as_str(),
-            "https://example.com/blog/company-update/"
-        );
+        let error = resolve_article_redirect(&current, "http://example.com/blog/company-update/")
+            .expect_err("implicit-port downgrade is rejected");
+        assert!(matches!(error, ArticlePageError::RedirectDowngrade { .. }));
 
         let cross_host =
             resolve_article_redirect(&current, "http://cdn.example.com/blog/company-update")
@@ -7306,6 +7480,19 @@ mod tests {
         assert_eq!(
             cross_host.as_str(),
             "http://cdn.example.com/blog/company-update"
+        );
+    }
+
+    #[test]
+    fn repairs_same_host_https_downgrades_with_an_explicit_default_port() {
+        let current =
+            Url::parse("https://example.com/blog/company-update").expect("current article URL");
+        let repaired =
+            resolve_article_redirect(&current, "http://example.com:443/blog/company-update/")
+                .expect("same effective-port redirect");
+        assert_eq!(
+            repaired.as_str(),
+            "https://example.com/blog/company-update/"
         );
     }
 

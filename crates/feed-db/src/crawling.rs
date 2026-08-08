@@ -920,6 +920,7 @@ impl Database {
     pub async fn cancel_running_crawl_runs_for_job(
         &self,
         job_id: Uuid,
+        lease_token: Uuid,
         reason: &str,
     ) -> Result<u64, DatabaseError> {
         let mut transaction = self.pool().begin().await?;
@@ -929,15 +930,26 @@ impl Database {
             SET
                 status = 'cancelled',
                 finished_at = CURRENT_TIMESTAMP,
-                error = $2,
+                error = $3,
                 metadata = metadata || jsonb_build_object(
                     'cancellation_reason',
-                    $2
+                    $3
                 )
-            WHERE job_id = $1 AND status = 'running'
+            WHERE
+                job_id = $1
+                AND status = 'running'
+                AND EXISTS (
+                    SELECT 1
+                    FROM jobs
+                    WHERE
+                        id = $1
+                        AND lease_token = $2
+                        AND status = 'running'
+                )
             "#,
         )
         .bind(job_id)
+        .bind(lease_token)
         .bind(reason)
         .execute(&mut *transaction)
         .await?
@@ -948,15 +960,26 @@ impl Database {
             SET
                 status = 'cancelled',
                 finished_at = CURRENT_TIMESTAMP,
-                error = $2,
+                error = $3,
                 metadata = metadata || jsonb_build_object(
                     'cancellation_reason',
-                    $2
+                    $3
                 )
-            WHERE job_id = $1 AND status = 'running'
+            WHERE
+                job_id = $1
+                AND status = 'running'
+                AND EXISTS (
+                    SELECT 1
+                    FROM jobs
+                    WHERE
+                        id = $1
+                        AND lease_token = $2
+                        AND status = 'running'
+                )
             "#,
         )
         .bind(job_id)
+        .bind(lease_token)
         .bind(reason)
         .execute(&mut *transaction)
         .await?

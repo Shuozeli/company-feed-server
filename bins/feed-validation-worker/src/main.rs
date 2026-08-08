@@ -63,7 +63,8 @@ async fn main() -> Result<()> {
         "feed-validation-worker",
         settings.run_jobs,
         supported_job_types,
-    );
+    )
+    .with_operator_api_token(settings.operator_api_token);
     let listener = tokio::net::TcpListener::bind(settings.validation_worker_bind_addr)
         .await
         .with_context(|| {
