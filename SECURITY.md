@@ -21,6 +21,24 @@ Include:
 Maintainers aim to acknowledge a complete report within five business days and
 will coordinate disclosure after a fix or mitigation is available.
 
+## Content Rights and Takedown
+
+For copyright, licensing, attribution, trademark, or removal requests about
+material in the public archive, use the routes documented in
+[docs/publication-model.md](docs/publication-model.md):
+
+- non-confidential correction or rights requests go to the public forms in the
+  archive repository
+  ([data-correction](https://github.com/datayuacx26/company-news-data/issues/new?template=data-correction.yml),
+  [rights / removal](https://github.com/datayuacx26/company-news-data/issues/new?template=rights.yml));
+- confidential legal correspondence (for example a formal takedown notice) may
+  use this repository's
+  [private advisory form](https://github.com/Shuozeli/company-feed-server/security/advisories/new).
+
+Maintainers aim to acknowledge a complete removal request within five business
+days and to remove or reduce the affected material to metadata promptly on a
+valid request.
+
 ## High-Priority Areas
 
 Reports are especially useful for:

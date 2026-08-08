@@ -41,6 +41,20 @@ public launch, the maintainers must:
 This blocker is resolved only when the review and any resulting corpus changes
 are complete. An exporter flag or disclaimer alone is not sufficient.
 
+**Status (2026-08-08): documentation and routes in place; final human/legal
+sign-off pending.** The publication model is now stated explicitly in
+[publication-model.md](publication-model.md); the rights stance and operator
+responsibility are in [data-and-content-policy.md](data-and-content-policy.md);
+correction and rights-removal routes are wired (public data-correction and
+rights forms in the archive repository, plus a private advisory channel in this
+repository) and cross-linked from `SECURITY.md`. The published corpus is
+generated only from approved sources under the `approved_public` scope with
+canonical company identity applied (security-level display-name suffixes removed
+and kept as aliases; share classes of one entity merged). What remains is the
+maintainer's own rights/publisher-terms review (item 2) and the decision to keep
+full article text versus reducing to metadata + excerpts -- a human/legal call,
+not a code or documentation gap.
+
 ### Git archive scale
 
 The data architecture says to split the logical archive before compressed Git

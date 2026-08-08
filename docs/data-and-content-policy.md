@@ -45,3 +45,25 @@ target, or already present in an archive does not establish ownership,
 permission, a license, or a legal basis for redistribution. Operators must
 perform and document their own rights review before publishing generated
 material.
+
+## Publication Model
+
+The publication model for the maintainers' public archive, and the rights
+stance it rests on, is stated in [publication-model.md](publication-model.md).
+
+## Corrections and Rights Removal
+
+Requests about material in the public archive are monitored and actioned:
+
+- metadata correction:
+  [data-correction form](https://github.com/datayuacx26/company-news-data/issues/new?template=data-correction.yml);
+- rights or removal (copyright, licensing, attribution, trademark):
+  [rights form](https://github.com/datayuacx26/company-news-data/issues/new?template=rights.yml)
+  (do not include confidential legal material in a public issue); and
+- confidential legal correspondence:
+  [private advisory form](https://github.com/Shuozeli/company-feed-server/security/advisories/new).
+
+No rights are granted beyond what the original publisher permits. Requests for
+removal or correction of third-party material are reviewed and addressed
+promptly; because the archive is regenerated from source, excluding a source or
+record propagates the removal to subsequent generations.
