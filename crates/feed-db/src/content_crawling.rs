@@ -411,12 +411,12 @@ impl Database {
                     WHEN btrim($2) = '' THEN summary
                     ELSE $2
                 END,
-                body_text = $3,
-                body_html = $4,
-                body_markdown = $5,
+                body_text = CASE WHEN btrim($3) = '' THEN body_text ELSE $3 END,
+                body_html = CASE WHEN btrim($3) = '' THEN body_html ELSE $4 END,
+                body_markdown = CASE WHEN btrim($3) = '' THEN body_markdown ELSE $5 END,
                 published_at = COALESCE(published_at, $6),
                 fetched_at = $7,
-                content_hash = $8,
+                content_hash = CASE WHEN btrim($3) = '' THEN content_hash ELSE $8 END,
                 content_processing =
                     content_processing
                     || $9
