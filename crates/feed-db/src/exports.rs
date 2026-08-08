@@ -474,8 +474,8 @@ impl Database {
                 item.content_processing,
                 item.created_at,
                 item.updated_at,
-                company.company_key AS company_key,
-                company.name AS company_name,
+                canon.export_key AS company_key,
+                canon.export_name AS company_name,
                 company.metadata #>> '{universe,sector}'
                     AS company_category_name,
                 source.source_id AS source_key,
@@ -484,6 +484,59 @@ impl Database {
             FROM ranked_items AS selected
             JOIN feed_items AS item ON item.id = selected.id
             JOIN companies AS company ON company.id = item.company_id
+            -- Canonical company identity for the public archive (2026-08-08):
+            -- (a) strip security/share-class suffixes from the DISPLAYED name
+            --     (keeps the corporate designator, e.g. "Alphabet Inc. Class A
+            --     Common Stock" -> "Alphabet Inc."); applies to every company.
+            -- (b) collapse multiple share-class listings of the SAME legal entity
+            --     into one canonical company_key, but ONLY when a share-class
+            --     marker is present AND the base name carries a corporate
+            --     designator AND >1 company shares that base -- so bare names
+            --     like "Atlas"/"Scout" are never wrongly merged. Non-merged
+            --     companies keep their original key (paths/document ids stable).
+            JOIN (
+                WITH company_base AS (
+                    SELECT
+                        id,
+                        company_key,
+                        name,
+                        trim(regexp_replace(
+                            name,
+                            '\s+(class [a-d].*|series [a-d].*|common stock|capital stock|ordinary shares|preferred stock|preference shares|(american )?depositary (shares|receipts).*|ADS|ADR)\s*$',
+                            '',
+                            'i'
+                        )) AS legal_base,
+                        (name ~* '(\yclass [a-d]\y|\yseries [a-d]\y|common stock|capital stock|ordinary shares|preferred|preference|depositary|\yADS\y|\yADR\y)') AS has_marker,
+                        (name ~* '(\yinc\y|\ycorp\y|\ycorporation\y|\yltd\y|\ylimited\y|\yplc\y|\ycompany\y|\yholdings?\y|\ygroup\y|\ytrust\y|\yn\.?v\y|\ys\.?a\.?\y|\yag\y)') AS has_corp
+                    FROM companies
+                ),
+                merge_base AS (
+                    SELECT legal_base
+                    FROM company_base
+                    WHERE has_marker AND has_corp
+                    GROUP BY legal_base
+                    HAVING count(*) > 1
+                )
+                SELECT
+                    b.id,
+                    CASE
+                        WHEN b.has_marker AND b.has_corp AND m.legal_base IS NOT NULL
+                        THEN btrim(
+                            regexp_replace(
+                                regexp_replace(lower(b.legal_base), '[^a-z0-9]+', '-', 'g'),
+                                '(^-+|-+$)', '', 'g'
+                            ),
+                            '-'
+                        )
+                        ELSE b.company_key
+                    END AS export_key,
+                    CASE
+                        WHEN length(btrim(b.legal_base)) > 0 THEN btrim(b.legal_base)
+                        ELSE b.name
+                    END AS export_name
+                FROM company_base AS b
+                LEFT JOIN merge_base AS m ON m.legal_base = b.legal_base
+            ) AS canon ON canon.id = item.company_id
             JOIN sources AS source ON source.id = item.source_id
             LEFT JOIN exported_items AS exported
                 ON exported.target_id = $1
