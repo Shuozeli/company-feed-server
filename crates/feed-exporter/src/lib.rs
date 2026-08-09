@@ -481,6 +481,41 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn pure_refetch_does_not_change_article_generation() {
+        let temporary = TempDir::new().expect("temporary directory");
+        let (target, mut items) = fixture(temporary.path());
+
+        export_archive(target.clone(), items.clone())
+            .await
+            .expect("first export");
+        let first_head: serde_json::Value = serde_json::from_slice(
+            &fs::read(target.local_path.join("HEAD.json")).expect("first head"),
+        )
+        .expect("valid first head");
+
+        // A no-op re-crawl: only the volatile fetch bookkeeping timestamps
+        // advance, while every content field (title, summary, body, published_at,
+        // content_hash) is byte-identical. The generation is a content hash, so
+        // it must NOT change.
+        let later = Utc
+            .with_ymd_and_hms(2026, 8, 9, 6, 0, 0)
+            .single()
+            .expect("valid timestamp");
+        items[0].item.fetched_at = later;
+        items[0].item.updated_at = later;
+
+        export_archive(target.clone(), items)
+            .await
+            .expect("refetch export");
+        let second_head: serde_json::Value = serde_json::from_slice(
+            &fs::read(target.local_path.join("HEAD.json")).expect("second head"),
+        )
+        .expect("valid second head");
+
+        assert_eq!(first_head["generation"], second_head["generation"]);
+    }
+
+    #[tokio::test]
     async fn category_company_pages_are_bounded() {
         let temporary = TempDir::new().expect("temporary directory");
         let (target, seed) = fixture(temporary.path());

@@ -491,9 +491,37 @@ fn generation_id(projections: &[ArticleProjection<'_>]) -> Result<String, Export
     hasher.update(format!(
         "company-news-archive/generation/{SCHEMA_VERSION}\0"
     ));
+    // The generation is a pure CONTENT hash: it covers article identity and
+    // content only, never the volatile fetch bookkeeping timestamps
+    // (first_seen_at / fetched_at / last_updated_at). A no-op re-crawl that
+    // only bumps those timestamps must not churn the generation, so that the
+    // published generation is a faithful "did the content change?" signal.
+    // published_at IS included because it is the article's own publication
+    // date (part of its content, e.g. a null->date backfill is a real change).
     for projection in projections {
-        let line = index_document(projection);
-        hasher.update(serde_json::to_vec(&line)?);
+        let item = &projection.item.item;
+        let source_kind = item.source_kind.to_string();
+        let published_at = item
+            .published_at
+            .map(|value| value.to_rfc3339())
+            .unwrap_or_default();
+        for field in [
+            projection.document_id.as_str(),
+            projection.item.company_key.as_str(),
+            projection.item.company_name.as_str(),
+            projection.item.source_key.as_str(),
+            source_kind.as_str(),
+            item.canonical_url.as_str(),
+            item.url.as_str(),
+            item.title.as_str(),
+            item.summary.as_str(),
+            item.body_text.as_str(),
+            published_at.as_str(),
+            item.content_hash.as_str(),
+        ] {
+            hasher.update(field.as_bytes());
+            hasher.update(b"\0");
+        }
         hasher.update(b"\n");
     }
     Ok(hex::encode(hasher.finalize()))
