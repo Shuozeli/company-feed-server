@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://raw.githubusercontent.com/Shuozeli/company-news-data/main/schemas/v1/archive.schema.json",
+  "$id": "https://raw.githubusercontent.com/datayuacx26/company-news-data/main/schemas/v1/archive.schema.json",
   "title": "Company News Data v1",
   "description": "Canonical schemas for the version-controlled company news dataset.",
   "$defs": {

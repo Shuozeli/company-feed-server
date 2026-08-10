@@ -10,18 +10,18 @@ software releases.
 
 Do not publish exploit details, credentials, access tokens, personal data, or
 other sensitive information in an issue. Use the repository's
-[private vulnerability reporting form](https://github.com/Shuozeli/company-news-data/security/advisories/new)
+[private vulnerability reporting form](https://github.com/datayuacx26/company-news-data/security/advisories/new)
 for a vulnerability in the archive format, validator, workflow, or static-read
 contract.
 
 For a non-sensitive security-hardening suggestion, open a
-[repository issue](https://github.com/Shuozeli/company-news-data/issues/new)
+[repository issue](https://github.com/datayuacx26/company-news-data/issues/new)
 and describe the affected schema, validator, workflow, or read contract.
 
 Data accuracy and extraction problems are not security vulnerabilities. Use the
-[data-correction form](https://github.com/Shuozeli/company-news-data/issues/new?template=data-correction.yml).
+[data-correction form](https://github.com/datayuacx26/company-news-data/issues/new?template=data-correction.yml).
 Copyright, permission, attribution, and removal concerns belong in the
-[rights and removal form](https://github.com/Shuozeli/company-news-data/issues/new?template=rights.yml).
+[rights and removal form](https://github.com/datayuacx26/company-news-data/issues/new?template=rights.yml).
 
 ## Scope
 

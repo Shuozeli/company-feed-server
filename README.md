@@ -19,7 +19,7 @@ The project is split into three independently usable repositories:
 | Repository | Role |
 |---|---|
 | [`company-feed-server`](https://github.com/Shuozeli/company-feed-server) | Rust/Postgres discovery, validation, crawling, review, and export engine |
-| [`company-news-data`](https://github.com/Shuozeli/company-news-data) | Generated static archive, lazy indexes, schemas, and provenance |
+| [`company-news-data`](https://github.com/datayuacx26/company-news-data) | Generated static archive, lazy indexes, schemas, and provenance |
 | [`company-news-ui`](https://github.com/Shuozeli/company-news-ui) | Vite/React static reader that loads the archive through `index.json` |
 
 The system is name-first. Public and private companies use the same company
@@ -419,7 +419,7 @@ openapi/openapi.json
 ```
 
 The maintained output is published in
-[company-news-data](https://github.com/Shuozeli/company-news-data).
+[company-news-data](https://github.com/datayuacx26/company-news-data).
 
 The JSONL index is partitioned by archival month and adaptively split as a
 SHA-256 prefix trie. Manifests publish record/byte counts and content hashes;

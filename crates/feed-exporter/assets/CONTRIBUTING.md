@@ -23,7 +23,7 @@ the next generated snapshot.
 ## Report data problems
 
 Use the
-[data-correction form](https://github.com/Shuozeli/company-news-data/issues/new?template=data-correction.yml)
+[data-correction form](https://github.com/datayuacx26/company-news-data/issues/new?template=data-correction.yml)
 for:
 
 - an incorrect company name, identity, or category;
@@ -41,7 +41,7 @@ snapshot.
 
 Do not use a general data issue for copyright, licensing, permission,
 attribution, trademark, or removal concerns. Use the dedicated
-[rights and removal form](https://github.com/Shuozeli/company-news-data/issues/new?template=rights.yml)
+[rights and removal form](https://github.com/datayuacx26/company-news-data/issues/new?template=rights.yml)
 and read [`CONTENT_RIGHTS.md`](CONTENT_RIGHTS.md).
 
 Both issue routes are public. Do not include confidential material, credentials,
@@ -50,7 +50,7 @@ or unnecessary personal information.
 ## Report archive bugs
 
 Use the
-[archive bug form](https://github.com/Shuozeli/company-news-data/issues/new?template=archive-bug.yml)
+[archive bug form](https://github.com/datayuacx26/company-news-data/issues/new?template=archive-bug.yml)
 for a reproducible manifest, schema, hash, path, or validator failure. Include
 the smallest failing read sequence and sanitized validator output.
 

@@ -13,7 +13,7 @@
   "security": [],
   "servers": [
     {
-      "url": "https://raw.githubusercontent.com/Shuozeli/company-news-data/main"
+      "url": "https://raw.githubusercontent.com/datayuacx26/company-news-data/main"
     }
   ],
   "paths": {

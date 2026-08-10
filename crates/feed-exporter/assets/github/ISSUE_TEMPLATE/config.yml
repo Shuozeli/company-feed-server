@@ -7,5 +7,5 @@ contact_links:
     url: https://github.com/Shuozeli/company-feed-server/issues/new
     about: Report crawler, normalization, database, schema-generation, or exporter implementation problems.
   - name: Security vulnerability
-    url: https://github.com/Shuozeli/company-news-data/security/advisories/new
+    url: https://github.com/datayuacx26/company-news-data/security/advisories/new
     about: Report archive, validator, workflow, or static-read vulnerabilities privately.

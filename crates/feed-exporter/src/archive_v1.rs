@@ -1011,7 +1011,7 @@ fn readme(
     format!(
         r#"# Company News Data
 
-[![Validate archive](https://github.com/Shuozeli/company-news-data/actions/workflows/validate.yml/badge.svg?branch=main)](https://github.com/Shuozeli/company-news-data/actions/workflows/validate.yml)
+[![Validate archive](https://github.com/datayuacx26/company-news-data/actions/workflows/validate.yml/badge.svg?branch=main)](https://github.com/datayuacx26/company-news-data/actions/workflows/validate.yml)
 
 **[Open the live reader](https://shuozeli.github.io/company-news-ui/)** — it
 loads one bounded index page at a time and fetches article text only when an
@@ -1049,7 +1049,7 @@ Start with the small `index.json` bootstrap and follow paths declared by that
 same snapshot:
 
 ```bash
-BASE="https://raw.githubusercontent.com/Shuozeli/company-news-data/main/"
+BASE="https://raw.githubusercontent.com/datayuacx26/company-news-data/main/"
 
 INDEX="$(curl -fsSL "${{BASE}}index.json")"
 RECENT="$(printf '%s' "$INDEX" | jq -r '.paths.recent_manifest')"
@@ -1103,10 +1103,10 @@ publisher endorsement.
 - Third-party article text is not CC0 and is not relicensed here.
 
 Use the
-[data-correction form](https://github.com/Shuozeli/company-news-data/issues/new?template=data-correction.yml)
+[data-correction form](https://github.com/datayuacx26/company-news-data/issues/new?template=data-correction.yml)
 for identity, category, URL, provenance, duplicate, or extraction problems.
 Use the separate
-[rights and removal form](https://github.com/Shuozeli/company-news-data/issues/new?template=rights.yml)
+[rights and removal form](https://github.com/datayuacx26/company-news-data/issues/new?template=rights.yml)
 for copyright, permission, attribution, or removal concerns.
 
 ## Contracts, validation, and contribution

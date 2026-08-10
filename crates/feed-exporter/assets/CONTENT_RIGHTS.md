@@ -28,12 +28,12 @@ does not apply to the third-party corpus.
 ## Public correction and rights routes
 
 Use the public
-[data-correction form](https://github.com/Shuozeli/company-news-data/issues/new?template=data-correction.yml)
+[data-correction form](https://github.com/datayuacx26/company-news-data/issues/new?template=data-correction.yml)
 for an incorrect company identity or category, canonical URL, title, date,
 provenance field, duplicate, or extracted body.
 
 Use the public
-[rights and removal form](https://github.com/Shuozeli/company-news-data/issues/new?template=rights.yml)
+[rights and removal form](https://github.com/datayuacx26/company-news-data/issues/new?template=rights.yml)
 for copyright, licensing, permission, attribution, trademark, or removal
 concerns. Include the repository paths and original publisher URLs needed to
 identify the material, but do not post confidential or unnecessary personal
