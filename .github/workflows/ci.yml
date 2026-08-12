@@ -50,8 +50,8 @@ jobs:
 
       - name: Install Rust toolchain
         run: |
-          rustup toolchain install 1.88.0 --profile minimal --component clippy,rustfmt
-          rustup default 1.88.0
+          rustup toolchain install 1.95.0 --profile minimal --component clippy,rustfmt
+          rustup default 1.95.0
 
       - name: Cache Cargo
         uses: actions/cache@v6
@@ -61,9 +61,9 @@ jobs:
             ~/.cargo/registry/cache
             ~/.cargo/git/db
             target
-          key: cargo-${{ runner.os }}-1.88.0-${{ hashFiles('Cargo.lock') }}
+          key: cargo-${{ runner.os }}-1.95.0-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
-            cargo-${{ runner.os }}-1.88.0-
+            cargo-${{ runner.os }}-1.95.0-
 
       - name: Check formatting
         run: cargo fmt --all --check

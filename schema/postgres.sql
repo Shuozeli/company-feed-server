@@ -942,6 +942,7 @@ CREATE TABLE "public"."raw_crawl_items" (
 	"fetched_url" text COLLATE "pg_catalog"."default" NOT NULL,
 	"canonical_url" text COLLATE "pg_catalog"."default",
 	"payload" jsonb DEFAULT '{}'::jsonb NOT NULL,
+	"payload_s3_key" text COLLATE "pg_catalog"."default",
 	"fetched_at" timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
 	"processing_status" text COLLATE "pg_catalog"."default" DEFAULT 'pending'::text NOT NULL,
 	"normalization_attempt_count" integer DEFAULT 0 NOT NULL,
@@ -978,6 +979,8 @@ ALTER TABLE "public"."raw_crawl_items" ADD CONSTRAINT "raw_crawl_items_pkey" PRI
 CREATE INDEX raw_crawl_items_processing_idx ON public.raw_crawl_items USING btree (processing_status, created_at) WHERE (processing_status = ANY (ARRAY['pending'::text, 'failed'::text]));
 
 CREATE INDEX raw_crawl_items_source_idx ON public.raw_crawl_items USING btree (source_id, fetched_at DESC);
+
+CREATE INDEX raw_crawl_items_unmigrated_idx ON public.raw_crawl_items USING btree (id) WHERE (payload_s3_key IS NULL);
 
 ALTER TABLE "public"."feed_items" ADD CONSTRAINT "feed_items_raw_crawl_item_id_fkey" FOREIGN KEY (raw_crawl_item_id) REFERENCES raw_crawl_items(id) ON DELETE SET NULL NOT VALID;
 

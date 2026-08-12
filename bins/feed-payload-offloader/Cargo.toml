@@ -1,0 +1,23 @@
+[package]
+name = "feed-payload-offloader"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+anyhow.workspace = true
+chrono.workspace = true
+serde_json.workspace = true
+sqlx.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+uuid.workspace = true
+aws-sdk-s3 = "1"
+aws-credential-types = "1"
+bytes = "1"
+futures = "0.3"
+flate2 = "1"
