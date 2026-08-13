@@ -17,20 +17,20 @@
 //! Best-effort: if the store is down, rows keep their payload and are retried.
 
 use std::io::Write;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use aws_credential_types::Credentials;
+use aws_sdk_s3::Client;
 use aws_sdk_s3::config::{BehaviorVersion, Region};
 use aws_sdk_s3::primitives::ByteStream;
-use aws_sdk_s3::Client;
 use bytes::Bytes;
-use flate2::write::GzEncoder;
 use flate2::Compression;
-use sqlx::postgres::PgPoolOptions;
+use flate2::write::GzEncoder;
 use sqlx::PgPool;
+use sqlx::postgres::PgPoolOptions;
 use tracing::{info, warn};
 use uuid::Uuid;
 
@@ -41,8 +41,15 @@ struct RawStore {
 }
 
 impl RawStore {
-    fn new(endpoint: String, region: String, access_key: String, secret_key: String, bucket: String) -> Self {
-        let credentials = Credentials::new(access_key, secret_key, None, None, "feed-payload-offloader");
+    fn new(
+        endpoint: String,
+        region: String,
+        access_key: String,
+        secret_key: String,
+        bucket: String,
+    ) -> Self {
+        let credentials =
+            Credentials::new(access_key, secret_key, None, None, "feed-payload-offloader");
         let s3_config = aws_sdk_s3::Config::builder()
             .behavior_version(BehaviorVersion::latest())
             .region(Region::new(region))
@@ -50,11 +57,21 @@ impl RawStore {
             .credentials_provider(credentials)
             .force_path_style(true) // REQUIRED for MinIO/RustFS
             .build();
-        Self { client: Client::from_conf(s3_config), bucket }
+        Self {
+            client: Client::from_conf(s3_config),
+            bucket,
+        }
     }
 
     async fn ensure_bucket(&self) -> Result<()> {
-        if self.client.head_bucket().bucket(&self.bucket).send().await.is_err() {
+        if self
+            .client
+            .head_bucket()
+            .bucket(&self.bucket)
+            .send()
+            .await
+            .is_err()
+        {
             self.client
                 .create_bucket()
                 .bucket(&self.bucket)
@@ -88,7 +105,10 @@ fn env_or(key: &str, default: &str) -> String {
 }
 
 fn parse_env<T: std::str::FromStr>(key: &str, default: T) -> T {
-    std::env::var(key).ok().and_then(|v| v.parse().ok()).unwrap_or(default)
+    std::env::var(key)
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(default)
 }
 
 /// One worker: repeatedly claims a disjoint batch with FOR UPDATE SKIP LOCKED
