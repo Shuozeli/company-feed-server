@@ -115,7 +115,8 @@ fn parse_env<T: std::str::FromStr>(key: &str, default: T) -> T {
 /// (so N workers read+detoast in parallel across Postgres backends without
 /// colliding), packs it into a gzipped NDJSON object, uploads it, blanks the
 /// payloads + stamps the key, and commits. Returns total rows migrated.
-async fn run_worker(
+#[derive(Clone)]
+struct WorkerCtx {
     store: RawStore,
     pool: PgPool,
     rows_per_object: usize,
@@ -124,21 +125,23 @@ async fn run_worker(
     shutdown: Arc<AtomicBool>,
     migrated: Arc<std::sync::atomic::AtomicU64>,
     errors: Arc<std::sync::atomic::AtomicU64>,
-) {
-    while !shutdown.load(Ordering::Relaxed) {
-        match offload_one_batch(&store, &pool, rows_per_object).await {
+}
+
+async fn run_worker(ctx: WorkerCtx) {
+    while !ctx.shutdown.load(Ordering::Relaxed) {
+        match offload_one_batch(&ctx.store, &ctx.pool, ctx.rows_per_object).await {
             Ok(0) => {
-                if continuous {
-                    tokio::time::sleep(idle_sleep).await;
+                if ctx.continuous {
+                    tokio::time::sleep(ctx.idle_sleep).await;
                 } else {
                     break;
                 }
             }
             Ok(n) => {
-                migrated.fetch_add(n as u64, Ordering::Relaxed);
+                ctx.migrated.fetch_add(n as u64, Ordering::Relaxed);
             }
             Err(error) => {
-                errors.fetch_add(1, Ordering::Relaxed);
+                ctx.errors.fetch_add(1, Ordering::Relaxed);
                 warn!(%error, "batch failed; rows retried next pass");
                 tokio::time::sleep(Duration::from_secs(2)).await;
             }
@@ -278,19 +281,18 @@ async fn main() -> Result<()> {
         });
     }
 
+    let ctx = WorkerCtx {
+        store,
+        pool,
+        rows_per_object,
+        continuous,
+        idle_sleep,
+        shutdown: shutdown.clone(),
+        migrated: migrated.clone(),
+        errors: errors.clone(),
+    };
     let workers: Vec<_> = (0..object_concurrency)
-        .map(|_| {
-            tokio::spawn(run_worker(
-                store.clone(),
-                pool.clone(),
-                rows_per_object,
-                continuous,
-                idle_sleep,
-                shutdown.clone(),
-                migrated.clone(),
-                errors.clone(),
-            ))
-        })
+        .map(|_| tokio::spawn(run_worker(ctx.clone())))
         .collect();
 
     for worker in workers {
