@@ -102,6 +102,34 @@ services:
       start_period: 10s
     restart: unless-stopped
 
+  payload-offloader:
+    profiles: ["workers"]
+    image: ${COMPANY_FEED_IMAGE:-company-feed-server:local}
+    build:
+      context: .
+    entrypoint: ["feed-payload-offloader"]
+    # Host networking: the offloader must reach the NAS MinIO over Tailscale
+    # (a docker bridge cannot route to a Tailscale peer), and it talks to
+    # Postgres via the host-published port. Do not add `ports:` under host mode.
+    network_mode: host
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-company_feed}:${POSTGRES_PASSWORD:-company_feed}@127.0.0.1:${POSTGRES_PORT:-55432}/${POSTGRES_DB:-company_feed}
+      RUSTFS_ENDPOINT: ${RUSTFS_ENDPOINT:-http://ugreen-nas-dxp4800pro-yuacx.tail8f3b66.ts.net:9000}
+      RUSTFS_ACCESS_KEY: ${RUSTFS_ACCESS_KEY:-nas-minio}
+      RUSTFS_SECRET_KEY: ${RUSTFS_SECRET_KEY:-e9d2c4f9093adea8d659e62a0917624d53479b32745c6a7c}
+      RUSTFS_REGION: ${RUSTFS_REGION:-us-east-1}
+      RAW_CRAWL_BUCKET: ${RAW_CRAWL_BUCKET:-company-feed-crawl-raw}
+      OFFLOAD_CONTINUOUS: "true"
+      OFFLOAD_BATCH_SIZE: ${OFFLOAD_BATCH_SIZE:-2000}
+      OFFLOAD_CONCURRENCY: ${OFFLOAD_CONCURRENCY:-4}
+      OFFLOAD_DB_POOL: ${OFFLOAD_DB_POOL:-8}
+      OFFLOAD_IDLE_SLEEP_SECS: ${OFFLOAD_IDLE_SLEEP_SECS:-60}
+      RUST_LOG: ${RUST_LOG:-warn,feed_payload_offloader=info}
+    depends_on:
+      schema:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
   discovery-worker:
     profiles: ["discovery"]
     image: ${COMPANY_FEED_IMAGE:-company-feed-server:local}

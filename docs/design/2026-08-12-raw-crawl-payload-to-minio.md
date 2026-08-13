@@ -4,7 +4,11 @@
 
 ## Status
 
-In Progress (2026-08-12)
+Completed (2026-08-13). Backfill drained all 15.5M rows to MinIO (0 errors);
+VACUUM FULL shrank raw_crawl_items 85 GB -> 11 GB; disk free ~127 GB -> 199 GB.
+Offloader runs in continuous steady-state. Follow-up: deploy it as a
+compose/k8s service so steady-state survives host reboots (currently a detached
+process).
 
 ## Problem
 

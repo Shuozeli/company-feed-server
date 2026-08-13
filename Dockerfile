@@ -22,6 +22,7 @@ RUN --mount=type=cache,id=company-feed-cargo-registry,target=/usr/local/cargo/re
       -p feed-news-extraction-worker \
       -p feed-content-worker \
       -p feed-admin \
+      -p feed-payload-offloader \
     && mkdir -p /app/out \
     && cp /app/target/release/feed-server /app/out/feed-server \
     && cp /app/target/release/feed-worker /app/out/feed-worker \
@@ -29,7 +30,8 @@ RUN --mount=type=cache,id=company-feed-cargo-registry,target=/usr/local/cargo/re
     && cp /app/target/release/feed-validation-worker /app/out/feed-validation-worker \
     && cp /app/target/release/feed-news-extraction-worker /app/out/feed-news-extraction-worker \
     && cp /app/target/release/feed-content-worker /app/out/feed-content-worker \
-    && cp /app/target/release/feed-admin /app/out/feed-admin
+    && cp /app/target/release/feed-admin /app/out/feed-admin \
+    && cp /app/target/release/feed-payload-offloader /app/out/feed-payload-offloader
 
 FROM debian:bookworm-slim AS runtime
 
@@ -46,6 +48,7 @@ COPY --from=builder /app/out/feed-validation-worker /usr/local/bin/feed-validati
 COPY --from=builder /app/out/feed-news-extraction-worker /usr/local/bin/feed-news-extraction-worker
 COPY --from=builder /app/out/feed-content-worker /usr/local/bin/feed-content-worker
 COPY --from=builder /app/out/feed-admin /usr/local/bin/feed-admin
+COPY --from=builder /app/out/feed-payload-offloader /usr/local/bin/feed-payload-offloader
 COPY --from=schema-builder /out/pg-schema-diff /usr/local/bin/pg-schema-diff
 COPY configs ./configs
 COPY schema ./schema
