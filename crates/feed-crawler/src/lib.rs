@@ -927,6 +927,17 @@ impl HtmlArticleCrawler {
         &self,
         urls: &[Url],
     ) -> Result<HtmlArticleCrawlReport, ArticlePageError> {
+        self.crawl_urls_with_browser(urls, false).await
+    }
+
+    /// Like [`crawl_urls`], but fetches each page through a real browser over CDP
+    /// when `use_browser` is set (for WAF-blocked article hosts). Requires a
+    /// configured browser or the fetch fails with `BrowserUnavailable`.
+    pub async fn crawl_urls_with_browser(
+        &self,
+        urls: &[Url],
+        use_browser: bool,
+    ) -> Result<HtmlArticleCrawlReport, ArticlePageError> {
         let candidates = urls
             .iter()
             .cloned()
@@ -937,7 +948,7 @@ impl HtmlArticleCrawler {
                 document_url: None,
             })
             .collect::<Vec<_>>();
-        self.crawl_candidates(&candidates, true, false).await
+        self.crawl_candidates(&candidates, true, use_browser).await
     }
 
     /// Fetches independent article bodies for URLs that were already

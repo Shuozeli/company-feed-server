@@ -181,7 +181,7 @@ pub fn build_news_extraction_job_registry(
         min_content_chars: settings.news_extraction_min_content_chars,
         allow_private_networks: settings.news_extraction_allow_private_networks,
         user_agent: settings.public_fetch_user_agent.clone(),
-        browser: None,
+        browser: residential_browser_config(),
     })?;
     let recipe_crawler = HtmlRecipeCrawler::new(HtmlRecipeCrawlerConfig {
         request_timeout: settings.news_extraction_fetch_timeout,
@@ -2660,7 +2660,17 @@ impl JobHandler for CompanyNewsExtractionJobHandler {
             .iter()
             .map(|article| article.url.clone())
             .collect::<Vec<_>>();
-        let mut report = match self.crawler.crawl_urls(&urls).await {
+        // Classify by the ARTICLE host: a company whose listing is on a clean
+        // domain (e.g. inovio.com) can still host its articles on a WAF-blocked
+        // IR-CMS host (ir.inovio.com), so drive the browser off the article URLs.
+        let use_browser = urls.iter().any(|url| {
+            residential_browser_profile_for(url) == RecipeFetchProfile::ResidentialBrowser
+        });
+        let mut report = match self
+            .crawler
+            .crawl_urls_with_browser(&urls, use_browser)
+            .await
+        {
             Ok(report) => report,
             Err(error) => {
                 let retryable = classify_article_crawler_error(&error);
@@ -3874,7 +3884,17 @@ fn build_company_news_recipe_spec(
         preferred_initial_recipe_path_prefix(&publication_url, &evidence_article_urls)
             .into_iter()
             .collect();
-    let fetch_profile = residential_browser_profile_for(&publication_url);
+    // ResidentialBrowser if either the listing or any evidence article URL is on
+    // a WAF-blocked host (articles are often on a separate IR-CMS host).
+    let fetch_profile = if residential_browser_profile_for(&publication_url)
+        == RecipeFetchProfile::ResidentialBrowser
+        || evidence_article_urls.iter().any(|url| {
+            residential_browser_profile_for(url) == RecipeFetchProfile::ResidentialBrowser
+        }) {
+        RecipeFetchProfile::ResidentialBrowser
+    } else {
+        RecipeFetchProfile::Default
+    };
     CompanyNewsRecipeSpec {
         schema_version: COMPANY_NEWS_RECIPE_SCHEMA_VERSION.to_owned(),
         publication_url,
