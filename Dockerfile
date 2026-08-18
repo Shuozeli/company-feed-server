@@ -6,6 +6,11 @@ RUN GOBIN=/out go install \
 
 FROM rust:1.95-bookworm AS builder
 
+# protoc is required by feed-crawler's build.rs (tonic-build / prost-build).
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends protobuf-compiler \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates

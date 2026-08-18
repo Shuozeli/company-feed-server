@@ -48,6 +48,9 @@ jobs:
           test -s schema/postgres.sql
           test ! -d migrations
 
+      - name: Install protoc
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+
       - name: Install Rust toolchain
         run: |
           rustup toolchain install 1.95.0 --profile minimal --component clippy,rustfmt
