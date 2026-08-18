@@ -33,8 +33,8 @@ pub use entity::{
 pub use job::{ClaimedJob, Job, JobSpec, JobStatus, JobType};
 pub use recipe::{
     COMPANY_NEWS_RECIPE_SCHEMA_VERSION, CompanyNewsRecipe, CompanyNewsRecipeCoverage,
-    CompanyNewsRecipeRun, CompanyNewsRecipeSpec, RecipeCorrectnessPolicy, RecipeFreshnessPolicy,
-    RecipeHealth, RecipeItemScope, RecipeRenderMode, RecipeRunStatus, RecipeSpecError,
-    RecipeStatus,
+    CompanyNewsRecipeRun, CompanyNewsRecipeSpec, RecipeCorrectnessPolicy, RecipeFetchProfile,
+    RecipeFreshnessPolicy, RecipeHealth, RecipeItemScope, RecipeRenderMode, RecipeRunStatus,
+    RecipeSpecError, RecipeStatus,
 };
 pub use url_policy::{has_invalid_resource_query, is_sitemap_url, resource_query_pairs};

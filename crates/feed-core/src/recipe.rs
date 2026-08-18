@@ -91,6 +91,20 @@ pub enum RecipeRenderMode {
     Browser,
 }
 
+/// How a source must be fetched. Most sources are reachable by the shared HTTP
+/// adapter (`Default`). Some newsrooms are unreachable that way — WAF/bot-blocked
+/// IR-CMS hosts (e.g. Q4/West `ir.*`/`investor.*`) that 403/429 datacenter IPs,
+/// or JS-rendered article feeds — and must be fetched with a real browser over a
+/// residential-egress CDP (`ResidentialBrowser`). This is orthogonal to
+/// `render_mode`: it records the egress/anti-bot requirement, not JS execution.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RecipeFetchProfile {
+    #[default]
+    Default,
+    ResidentialBrowser,
+}
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RecipeItemScope {
@@ -164,6 +178,11 @@ pub struct CompanyNewsRecipeSpec {
     pub item_scope: RecipeItemScope,
     #[serde(default)]
     pub evidence_article_urls: Vec<Url>,
+    /// Egress / anti-bot fetch requirement for this source (see
+    /// [`RecipeFetchProfile`]). Defaults to `Default` so pre-existing recipes
+    /// (which omit the field) deserialize unchanged.
+    #[serde(default)]
+    pub fetch_profile: RecipeFetchProfile,
 }
 
 impl CompanyNewsRecipeSpec {

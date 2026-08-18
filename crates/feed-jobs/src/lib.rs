@@ -10,9 +10,10 @@ use feed_core::{
     AppSettings, COMPANY_NEWS_RECIPE_SCHEMA_VERSION, CandidateDecisionMode,
     CandidateValidationStatus, Company, CompanyNewsRecipe, CompanyNewsRecipeSpec, CrawlBatch,
     FeedItem, Job, JobSpec, JobType, ProcessedCrawlItem, RawCrawlItem, RecipeCorrectnessPolicy,
-    RecipeFreshnessPolicy, RecipeItemScope, RecipeRenderMode, RecipeStatus, Source,
-    SourceCandidate, SourceKind, SourceStatus, ValidationActivationPolicy, WebDiscoveryAdapterMode,
-    is_cms_placeholder_article, is_non_editorial_utility_article, is_sitemap_url,
+    RecipeFetchProfile, RecipeFreshnessPolicy, RecipeItemScope, RecipeRenderMode, RecipeStatus,
+    Source, SourceCandidate, SourceKind, SourceStatus, ValidationActivationPolicy,
+    WebDiscoveryAdapterMode, is_cms_placeholder_article, is_non_editorial_utility_article,
+    is_sitemap_url,
 };
 use feed_crawler::{
     ArticleCrawlCandidate, ArticleFetchFailure, ArticlePageError, CrawlError,
@@ -3832,6 +3833,7 @@ fn build_company_news_recipe_spec(
         schema_version: COMPANY_NEWS_RECIPE_SCHEMA_VERSION.to_owned(),
         publication_url,
         render_mode: RecipeRenderMode::Http,
+        fetch_profile: RecipeFetchProfile::default(),
         article_link_selector: "a[href]".to_owned(),
         allowed_hosts,
         include_path_prefixes,
