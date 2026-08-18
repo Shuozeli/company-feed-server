@@ -1,0 +1,27 @@
+syntax = "proto3";
+
+// Minimal client-side view of the dragbv2-browser Browser service
+// (libservers/v2/browser/proto/browser.proto in the dragb monorepo). Only the
+// FetchPage RPC is used here — to fetch WAF-blocked / JS-rendered listing pages
+// through a real Chrome over CDP. Field numbers match the server; the optional
+// browser_account field (5) is intentionally omitted because we always pass an
+// explicit cdp_url.
+package dragbv2.browser;
+
+service Browser {
+  rpc FetchPage(FetchPageRequest) returns (FetchPageResponse);
+}
+
+message FetchPageRequest {
+  string url = 1;
+  string wait_for_selector = 2;
+  uint64 timeout_ms = 3;
+  string cdp_url = 4;
+}
+
+message FetchPageResponse {
+  string html = 1;
+  uint32 status = 2;
+  string final_url = 3;
+  string title = 4;
+}

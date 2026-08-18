@@ -16,7 +16,7 @@ use feed_core::{
     is_sitemap_url,
 };
 use feed_crawler::{
-    ArticleCrawlCandidate, ArticleFetchFailure, ArticlePageError, CrawlError,
+    ArticleCrawlCandidate, ArticleFetchFailure, ArticlePageError, BrowserFetchConfig, CrawlError,
     HtmlArticleCrawlReport, HtmlArticleCrawler, HtmlArticleCrawlerConfig, HtmlRecipeCrawlCache,
     HtmlRecipeCrawlReport, HtmlRecipeCrawler, HtmlRecipeCrawlerConfig, RecipeCrawlError,
     RssAtomCrawler, RssAtomCrawlerConfig, distinct_sanitized_content_count,
@@ -190,6 +190,7 @@ pub fn build_news_extraction_job_registry(
         min_content_chars: settings.news_extraction_min_content_chars,
         allow_private_networks: settings.news_extraction_allow_private_networks,
         user_agent: settings.public_fetch_user_agent.clone(),
+        browser: residential_browser_config(),
     })?;
     Ok(
         JobHandlerRegistry::new().register(Arc::new(CompanyNewsExtractionJobHandler::new(
@@ -223,7 +224,30 @@ fn build_recipe_crawler(settings: &AppSettings) -> Result<HtmlRecipeCrawler, Rec
         min_content_chars: 200,
         allow_private_networks: false,
         user_agent: settings.public_fetch_user_agent.clone(),
+        browser: residential_browser_config(),
         ..HtmlRecipeCrawlerConfig::default()
+    })
+}
+
+/// Optional residential-browser fetch config for recipes marked
+/// `fetch_profile = ResidentialBrowser`. Enabled only when both env vars are set:
+/// `RESIDENTIAL_BROWSER_ENDPOINT` (dragbv2-browser gRPC) and
+/// `RESIDENTIAL_BROWSER_CDP_URL` (a WAF-passing residential Chrome CDP).
+fn residential_browser_config() -> Option<BrowserFetchConfig> {
+    let endpoint = std::env::var("RESIDENTIAL_BROWSER_ENDPOINT")
+        .ok()
+        .filter(|value| !value.trim().is_empty())?;
+    let cdp_url = std::env::var("RESIDENTIAL_BROWSER_CDP_URL")
+        .ok()
+        .filter(|value| !value.trim().is_empty())?;
+    let timeout_secs = std::env::var("RESIDENTIAL_BROWSER_TIMEOUT_SECONDS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(60);
+    Some(BrowserFetchConfig {
+        endpoint,
+        cdp_url,
+        timeout: std::time::Duration::from_secs(timeout_secs),
     })
 }
 

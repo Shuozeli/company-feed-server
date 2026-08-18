@@ -1,3 +1,7 @@
+mod browser_fetch;
+
+pub use browser_fetch::{BrowserFetchConfig, BrowserFetchError, BrowserFetcher};
+
 use std::{
     collections::{HashMap, HashSet},
     net::{IpAddr, Ipv4Addr, Ipv6Addr},
@@ -9,7 +13,7 @@ use chrono::{DateTime, Datelike, NaiveDate, NaiveDateTime, Utc};
 use feed_content::{ContentProcessOptions, process_html};
 use feed_core::{
     CompanyNewsRecipeSpec, CrawlBatch, DEFAULT_PUBLIC_FETCH_USER_AGENT, RawCrawlItem,
-    RecipeRenderMode, Source, SourceKind, has_invalid_resource_query,
+    RecipeFetchProfile, RecipeRenderMode, Source, SourceKind, has_invalid_resource_query,
     is_non_editorial_utility_article, resource_query_pairs,
 };
 use feed_rs::model::FeedType;
@@ -245,6 +249,10 @@ pub struct HtmlRecipeCrawlerConfig {
     pub min_content_chars: usize,
     pub allow_private_networks: bool,
     pub user_agent: String,
+    /// When set, recipes with `fetch_profile = ResidentialBrowser` fetch their
+    /// listing through dragbv2-browser over this residential CDP. `None` disables
+    /// browser fetch (such recipes then fail with `BrowserUnavailable`).
+    pub browser: Option<BrowserFetchConfig>,
 }
 
 impl Default for HtmlRecipeCrawlerConfig {
@@ -258,6 +266,7 @@ impl Default for HtmlRecipeCrawlerConfig {
             min_content_chars: 200,
             allow_private_networks: false,
             user_agent: DEFAULT_PUBLIC_FETCH_USER_AGENT.to_owned(),
+            browser: None,
         }
     }
 }
@@ -267,6 +276,7 @@ pub struct HtmlRecipeCrawler {
     client: Client,
     article_crawler: HtmlArticleCrawler,
     config: HtmlRecipeCrawlerConfig,
+    browser: Option<BrowserFetcher>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -420,10 +430,12 @@ impl HtmlRecipeCrawler {
             user_agent: config.user_agent.clone(),
         })
         .map_err(RecipeCrawlError::Article)?;
+        let browser = config.browser.clone().map(BrowserFetcher::new);
         Ok(Self {
             client,
             article_crawler,
             config,
+            browser,
         })
     }
 
@@ -446,9 +458,23 @@ impl HtmlRecipeCrawler {
         if recipe.render_mode != RecipeRenderMode::Http {
             return Err(RecipeCrawlError::UnsupportedRenderMode(recipe.render_mode));
         }
-        let (publication_final_url, html) = self
-            .fetch_listing_with_cache(&recipe.publication_url, cache)
-            .await?;
+        // ResidentialBrowser recipes (WAF-blocked IR-CMS / JS feeds) fetch the
+        // listing through a real Chrome over CDP, waiting for the article-link
+        // selector so the capture happens past the WAF challenge / client render.
+        let (publication_final_url, html) =
+            if recipe.fetch_profile == RecipeFetchProfile::ResidentialBrowser {
+                let browser = self
+                    .browser
+                    .as_ref()
+                    .ok_or(RecipeCrawlError::BrowserUnavailable)?;
+                browser
+                    .fetch(&recipe.publication_url, &recipe.article_link_selector)
+                    .await
+                    .map_err(|error| RecipeCrawlError::Browser(Box::new(error)))?
+            } else {
+                self.fetch_listing_with_cache(&recipe.publication_url, cache)
+                    .await?
+            };
         let (links, structure_fingerprint) = extract_recipe_links_off_runtime(
             publication_final_url.clone(),
             html,
@@ -6777,6 +6803,10 @@ pub enum RecipeCrawlError {
     Client(reqwest::Error),
     #[error(transparent)]
     Article(ArticlePageError),
+    #[error(transparent)]
+    Browser(Box<BrowserFetchError>),
+    #[error("recipe requires residential-browser fetch but no browser is configured")]
+    BrowserUnavailable,
 }
 
 impl RecipeCrawlError {
@@ -6784,11 +6814,14 @@ impl RecipeCrawlError {
         match self {
             Self::Client(error) => error.is_timeout() || error.is_connect() || error.is_request(),
             Self::Article(error) => error.is_retryable(),
+            // Transport/RPC failures to the browser service are transient.
+            Self::Browser(_) => true,
             Self::InvalidConfig(_)
             | Self::InvalidSelector(_)
             | Self::UnsupportedRenderMode(_)
             | Self::UnsupportedListingContentType(_)
-            | Self::InvalidListing(_) => false,
+            | Self::InvalidListing(_)
+            | Self::BrowserUnavailable => false,
         }
     }
 }

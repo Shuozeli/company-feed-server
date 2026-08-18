@@ -11,6 +11,9 @@ rust-version = "1.95"
 [workspace.dependencies]
 anyhow = "1.0"
 async-trait = "0.1"
+tonic = "0.12"
+tonic-build = "0.12"
+prost = "0.13"
 axum = "0.8"
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4.6", features = ["derive", "env"] }
