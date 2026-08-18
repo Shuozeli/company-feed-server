@@ -452,7 +452,17 @@ impl Database {
                 FROM company_news_recipes AS r
                 JOIN companies AS c ON c.id = r.company_id
                 LEFT JOIN company_news_recipe_state AS st ON st.recipe_id = r.id
-                WHERE r.status = 'stale' OR COALESCE(st.rebuild_required, false) = true
+                WHERE (r.status = 'stale' OR COALESCE(st.rebuild_required, false) = true)
+                    -- exclude companies that already own a healthy active recipe
+                    -- (a stale OLD version alongside a working active one needs no rebuild)
+                    AND NOT EXISTS (
+                        SELECT 1
+                        FROM company_news_recipes AS r2
+                        LEFT JOIN company_news_recipe_state AS st2 ON st2.recipe_id = r2.id
+                        WHERE r2.company_id = c.id
+                          AND r2.status = 'active'
+                          AND COALESCE(st2.rebuild_required, false) = false
+                    )
                 ORDER BY c.id, COALESCE(st.consecutive_failures, 0) DESC
             ) AS q
             ORDER BY consecutive_failures DESC, stale_at ASC NULLS LAST
