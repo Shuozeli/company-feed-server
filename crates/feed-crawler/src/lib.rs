@@ -2,6 +2,11 @@ mod browser_fetch;
 
 pub use browser_fetch::{BrowserFetchConfig, BrowserFetchError, BrowserFetcher};
 
+/// Generic content container to wait for when browser-fetching an article body,
+/// so the capture happens after any WAF interstitial / client-side render clears
+/// (verified against Q4/West IR-CMS article pages).
+const ARTICLE_BROWSER_WAIT_SELECTOR: &str = "main, article, [role=\"main\"]";
+
 use std::{
     collections::{HashMap, HashSet},
     net::{IpAddr, Ipv4Addr, Ipv6Addr},
@@ -170,6 +175,10 @@ pub struct HtmlArticleCrawlerConfig {
     pub min_content_chars: usize,
     pub allow_private_networks: bool,
     pub user_agent: String,
+    /// When set, article bodies for ResidentialBrowser recipe crawls are fetched
+    /// through dragbv2-browser over this residential CDP (same config as the
+    /// listing fetch).
+    pub browser: Option<BrowserFetchConfig>,
 }
 
 impl Default for HtmlArticleCrawlerConfig {
@@ -183,6 +192,7 @@ impl Default for HtmlArticleCrawlerConfig {
             min_content_chars: 200,
             allow_private_networks: false,
             user_agent: DEFAULT_PUBLIC_FETCH_USER_AGENT.to_owned(),
+            browser: None,
         }
     }
 }
@@ -193,6 +203,7 @@ pub struct HtmlArticleCrawler {
     config: HtmlArticleCrawlerConfig,
     request_slots: Arc<Semaphore>,
     host_request_slots: Arc<Mutex<HashMap<String, Arc<Semaphore>>>>,
+    browser: Option<BrowserFetcher>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -428,6 +439,7 @@ impl HtmlRecipeCrawler {
             min_content_chars: config.min_content_chars,
             allow_private_networks: config.allow_private_networks,
             user_agent: config.user_agent.clone(),
+            browser: config.browser.clone(),
         })
         .map_err(RecipeCrawlError::Article)?;
         let browser = config.browser.clone().map(BrowserFetcher::new);
@@ -488,7 +500,10 @@ impl HtmlRecipeCrawler {
         let discovered_url_count = links.len();
         let mut article_report = self
             .article_crawler
-            .crawl_recipe_links(&links)
+            .crawl_recipe_links(
+                &links,
+                recipe.fetch_profile == RecipeFetchProfile::ResidentialBrowser,
+            )
             .await
             .map_err(RecipeCrawlError::Article)?;
         repair_repeated_page_titles(&mut article_report.items);
@@ -898,11 +913,13 @@ impl HtmlArticleCrawler {
             .user_agent(&config.user_agent)
             .build()?;
         let request_slots = Arc::new(Semaphore::new(config.max_concurrency));
+        let browser = config.browser.clone().map(BrowserFetcher::new);
         Ok(Self {
             client,
             config,
             request_slots,
             host_request_slots: Arc::new(Mutex::new(HashMap::new())),
+            browser,
         })
     }
 
@@ -920,7 +937,7 @@ impl HtmlArticleCrawler {
                 document_url: None,
             })
             .collect::<Vec<_>>();
-        self.crawl_candidates(&candidates, true).await
+        self.crawl_candidates(&candidates, true, false).await
     }
 
     /// Fetches independent article bodies for URLs that were already
@@ -932,20 +949,22 @@ impl HtmlArticleCrawler {
         &self,
         candidates: &[ArticleCrawlCandidate],
     ) -> Result<HtmlArticleCrawlReport, ArticlePageError> {
-        self.crawl_candidates(candidates, false).await
+        self.crawl_candidates(candidates, false, false).await
     }
 
     async fn crawl_recipe_links(
         &self,
         links: &[ArticleCrawlCandidate],
+        use_browser: bool,
     ) -> Result<HtmlArticleCrawlReport, ArticlePageError> {
-        self.crawl_candidates(links, true).await
+        self.crawl_candidates(links, true, use_browser).await
     }
 
     async fn crawl_candidates(
         &self,
         candidates: &[ArticleCrawlCandidate],
         reject_repeated_content: bool,
+        use_browser: bool,
     ) -> Result<HtmlArticleCrawlReport, ArticlePageError> {
         if candidates.len() > self.config.max_articles {
             return Err(ArticlePageError::TooManyUrls {
@@ -970,6 +989,7 @@ impl HtmlArticleCrawler {
                                 &candidate.url,
                                 candidate.title_hint.as_deref(),
                                 candidate.published_at_hint,
+                                use_browser,
                             )
                             .await;
                         (candidate_index, candidate, result)
@@ -1049,7 +1069,32 @@ impl HtmlArticleCrawler {
         requested_url: &Url,
         title_hint: Option<&str>,
         published_at_hint: Option<DateTime<Utc>>,
+        use_browser: bool,
     ) -> Result<RawCrawlItem, ArticlePageError> {
+        // ResidentialBrowser recipes fetch article bodies through a real Chrome
+        // over CDP too (the WAF-blocked host also 403s plain HTTP article pages).
+        // Wait for a generic content container so the capture happens past the
+        // WAF/JS challenge, then run the same extraction as the HTTP path.
+        if use_browser {
+            let browser = self
+                .browser
+                .as_ref()
+                .ok_or(ArticlePageError::BrowserUnavailable)?;
+            validate_article_fetch_url(requested_url)?;
+            let (final_url, html) = browser
+                .fetch(requested_url, ARTICLE_BROWSER_WAIT_SELECTOR)
+                .await
+                .map_err(|error| ArticlePageError::Browser(Box::new(error)))?;
+            return extract_article_with_hints(
+                requested_url,
+                final_url,
+                Some("text/html; charset=utf-8"),
+                html.as_bytes(),
+                self.config.min_content_chars,
+                title_hint,
+                published_at_hint,
+            );
+        }
         let mut current_url = requested_url.clone();
         for redirect_count in 0..=5 {
             validate_article_fetch_url(&current_url)?;
@@ -6785,6 +6830,10 @@ pub enum ArticlePageError {
     },
     #[error("page {url} has an invalid canonical URL")]
     InvalidCanonicalUrl { url: Url },
+    #[error(transparent)]
+    Browser(Box<BrowserFetchError>),
+    #[error("article requires residential-browser fetch but no browser is configured")]
+    BrowserUnavailable,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -6840,7 +6889,10 @@ impl ArticlePageError {
             Self::DnsResolution { .. }
             | Self::DnsResolutionEmpty { .. }
             | Self::RemoteAddressUnavailable { .. } => true,
+            // Transport/RPC failures to the browser service are transient.
+            Self::Browser(_) => true,
             Self::InvalidConfig(_)
+            | Self::BrowserUnavailable
             | Self::TooManyUrls { .. }
             | Self::UnsupportedUrl(_)
             | Self::ResponseTooLarge { .. }
@@ -6888,6 +6940,8 @@ impl ArticlePageError {
             Self::YearArchiveCollection { .. } => "year_archive_collection",
             Self::InsufficientContent { .. } => "insufficient_content",
             Self::InvalidCanonicalUrl { .. } => "invalid_canonical_url",
+            Self::Browser(_) => "browser_fetch_failed",
+            Self::BrowserUnavailable => "browser_unavailable",
         }
     }
 }

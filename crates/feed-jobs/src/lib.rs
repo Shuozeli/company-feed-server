@@ -132,6 +132,7 @@ pub fn build_content_crawl_job_registry(
         min_content_chars: settings.content_crawl_min_content_chars,
         allow_private_networks: false,
         user_agent: settings.public_fetch_user_agent.clone(),
+        browser: None,
     })?;
     let handler = ContentCrawlJobHandler {
         database,
@@ -180,6 +181,7 @@ pub fn build_news_extraction_job_registry(
         min_content_chars: settings.news_extraction_min_content_chars,
         allow_private_networks: settings.news_extraction_allow_private_networks,
         user_agent: settings.public_fetch_user_agent.clone(),
+        browser: None,
     })?;
     let recipe_crawler = HtmlRecipeCrawler::new(HtmlRecipeCrawlerConfig {
         request_timeout: settings.news_extraction_fetch_timeout,
@@ -249,6 +251,25 @@ fn residential_browser_config() -> Option<BrowserFetchConfig> {
         cdp_url,
         timeout: std::time::Duration::from_secs(timeout_secs),
     })
+}
+
+/// Classify a publication URL's fetch profile when building a recipe. WAF-blocked
+/// IR-CMS hosts (Q4/West `ir.*` / `investor.*` subdomains and `.aspx` listing
+/// pages) 403/429 datacenter IPs, so recipes for them are built as
+/// `ResidentialBrowser` — their validation crawl and later scheduled crawls then
+/// fetch through a real browser over CDP. Mirrors the bulk-marking host rule.
+fn residential_browser_profile_for(url: &url::Url) -> RecipeFetchProfile {
+    let host = url.host_str().unwrap_or_default().to_ascii_lowercase();
+    let path = url.path().to_ascii_lowercase();
+    if host.starts_with("ir.")
+        || host.starts_with("investor.")
+        || host.starts_with("investors.")
+        || path.ends_with(".aspx")
+    {
+        RecipeFetchProfile::ResidentialBrowser
+    } else {
+        RecipeFetchProfile::Default
+    }
 }
 
 #[derive(Clone)]
@@ -3853,11 +3874,12 @@ fn build_company_news_recipe_spec(
         preferred_initial_recipe_path_prefix(&publication_url, &evidence_article_urls)
             .into_iter()
             .collect();
+    let fetch_profile = residential_browser_profile_for(&publication_url);
     CompanyNewsRecipeSpec {
         schema_version: COMPANY_NEWS_RECIPE_SCHEMA_VERSION.to_owned(),
         publication_url,
         render_mode: RecipeRenderMode::Http,
-        fetch_profile: RecipeFetchProfile::default(),
+        fetch_profile,
         article_link_selector: "a[href]".to_owned(),
         allowed_hosts,
         include_path_prefixes,
