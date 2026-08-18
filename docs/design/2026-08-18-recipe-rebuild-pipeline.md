@@ -90,6 +90,37 @@ Per rule #29: expose `recipe_rebuild_pending`, `recipe_stale_total`,
 Prometheus alert when the rebuild backlog grows or the stale rate spikes; surface
 in GetDashboardStats.
 
+## Fetch-layer for WAF-blocked / JS sources (ResidentialBrowser) — status 2026-08-18
+
+The 104 rebuild failures are two systemic fetch-layer classes, not per-company
+bugs: WAF/bot-blocked IR-CMS hosts (Q4/West `ir.*`/`investor.*` `.aspx` that
+403/429 datacenter IPs) and JS-rendered feeds. A plain HTTP GET can't read them;
+a real Chrome over CDP (verified: dragbv2-browser `FetchPage` via the alienware
+residential CDP + wait for the article-link selector returns Inovio's 17 links
+where curl gets 403).
+
+Implemented + shipped (CI green):
+- `RecipeFetchProfile { Default, ResidentialBrowser }` on the recipe spec.
+- 208 IR-CMS stale recipes bulk-marked `residential_browser`.
+- **HtmlRecipeCrawler** fetches listing + article bodies via dragbv2-browser when
+  `fetch_profile == ResidentialBrowser` (first gRPC client in the repo; env
+  `RESIDENTIAL_BROWSER_ENDPOINT` + `RESIDENTIAL_BROWSER_CDP_URL`, wired on
+  worker + news-extraction-worker).
+- Builder sets `fetch_profile = ResidentialBrowser` for `ir.*`/`investor.*`/`.aspx`
+  publication URLs.
+
+KNOWN GAP (next session): end-to-end rebuild of a marked recipe still yields
+accepted=0. The rebuild's article discovery/validation runs through a SECOND
+article-crawl path — the standalone `HtmlArticleCrawler` built in
+`crates/feed-jobs/src/lib.rs` (the news-extraction handler, `browser: None`) —
+NOT the browser-enabled `HtmlRecipeCrawler` path. So candidate article pages on
+the WAF host still 403 during validation ("all suggested article pages were
+transiently unavailable"). To close it: give the news-extraction article crawler
+the browser config and thread `use_browser` from the candidate recipe's
+`fetch_profile` through `CompanyNewsExtractionJobHandler`'s validation crawl.
+Also: classify by the ARTICLE host, not only the publication host (Inovio's
+listing is `inovio.com` but its articles are on the blocked `ir.inovio.com`).
+
 ## Testing / rollout
 
 - Pillar A: unit-test candidate selection + the approve enqueue (Fake DB /
