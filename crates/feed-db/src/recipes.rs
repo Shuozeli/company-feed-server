@@ -34,6 +34,19 @@ pub struct CompanyNewsRecipeRunOutcome {
     pub rebuild_required: bool,
 }
 
+/// A company whose recipe needs rebuilding (status='stale' or rebuild_required).
+/// One row per company; the approval-gated rebuild candidate queue.
+#[derive(Clone, Debug, FromRow)]
+pub struct RecipeRebuildCandidate {
+    pub company_id: Uuid,
+    pub company_key: String,
+    pub company_name: String,
+    pub reason: String,
+    pub consecutive_failures: i32,
+    pub stale_at: Option<DateTime<Utc>>,
+    pub last_attempt_at: Option<DateTime<Utc>>,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, FromRow)]
 pub struct ActiveCompanyNewsPublicationClaim {
     pub recipe_id: Uuid,
@@ -414,6 +427,41 @@ impl Database {
         .fetch_one(self.pool())
         .await?;
         Ok(row.into())
+    }
+
+    /// The approval-gated rebuild candidate queue: companies that own a recipe
+    /// needing rebuild (status='stale' OR rebuild_required), worst first. One row
+    /// per company.
+    pub async fn list_recipe_rebuild_candidates(
+        &self,
+        limit: i64,
+    ) -> Result<Vec<RecipeRebuildCandidate>, DatabaseError> {
+        Ok(sqlx::query_as::<_, RecipeRebuildCandidate>(
+            r#"
+            SELECT company_id, company_key, company_name, reason,
+                   consecutive_failures, stale_at, last_attempt_at
+            FROM (
+                SELECT DISTINCT ON (c.id)
+                    c.id AS company_id,
+                    c.company_key AS company_key,
+                    c.name AS company_name,
+                    CASE WHEN r.status = 'stale' THEN 'stale' ELSE 'rebuild_required' END AS reason,
+                    COALESCE(st.consecutive_failures, 0) AS consecutive_failures,
+                    r.stale_at AS stale_at,
+                    st.last_attempt_at AS last_attempt_at
+                FROM company_news_recipes AS r
+                JOIN companies AS c ON c.id = r.company_id
+                LEFT JOIN company_news_recipe_state AS st ON st.recipe_id = r.id
+                WHERE r.status = 'stale' OR COALESCE(st.rebuild_required, false) = true
+                ORDER BY c.id, COALESCE(st.consecutive_failures, 0) DESC
+            ) AS q
+            ORDER BY consecutive_failures DESC, stale_at ASC NULLS LAST
+            LIMIT $1
+            "#,
+        )
+        .bind(limit)
+        .fetch_all(self.pool())
+        .await?)
     }
 
     pub async fn list_company_ids_needing_news_recipes(

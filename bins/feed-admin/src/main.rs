@@ -92,6 +92,28 @@ enum Command {
         #[arg(long)]
         include_covered: bool,
     },
+    /// Review, then approve, rebuilds of stale / rebuild-required recipes.
+    ///
+    /// Without --approve this only lists the rebuild candidate queue (dry run).
+    /// With --approve it enqueues bounded, spaced ExtractCompanyNews rebuild jobs
+    /// for the top candidates. This is the human-approval gate of the auto-rebuild
+    /// loop (see docs/design/2026-08-18-recipe-rebuild-pipeline.md).
+    #[command(name = "recipe-rebuild")]
+    RecipeRebuild {
+        /// Approve and enqueue rebuild jobs for the listed candidates.
+        #[arg(long)]
+        approve: bool,
+        /// Number of candidates to list, or to approve and enqueue.
+        #[arg(long, default_value_t = 20)]
+        limit: u32,
+        /// Space enqueued rebuild jobs so workers do not burst the private adapter.
+        #[arg(long, default_value_t = 2)]
+        spacing_seconds: u64,
+        #[arg(long, default_value_t = 31)]
+        lookback_days: u64,
+        #[arg(long, default_value_t = 20)]
+        max_articles: usize,
+    },
     /// Audit public URL identities shared by distinct issuers and quarantine
     /// associations without company-specific title, path, or host evidence.
     NewsOwnershipAudit {
@@ -268,6 +290,23 @@ async fn main() -> Result<()> {
                     max_articles,
                     include_covered,
                 },
+            )
+            .await?
+        }
+        Command::RecipeRebuild {
+            approve,
+            limit,
+            spacing_seconds,
+            lookback_days,
+            max_articles,
+        } => {
+            recipe_rebuild(
+                &database,
+                approve,
+                limit,
+                spacing_seconds,
+                lookback_days,
+                max_articles,
             )
             .await?
         }
@@ -680,6 +719,79 @@ async fn queue_export(database: &Database, target_id: Option<&str>) -> Result<()
             }))?
         );
     }
+    Ok(())
+}
+
+/// Approval-gated recipe rebuild: list the rebuild candidate queue, and (with
+/// --approve) enqueue bounded, spaced rebuild jobs for the top candidates.
+async fn recipe_rebuild(
+    database: &Database,
+    approve: bool,
+    limit: u32,
+    spacing_seconds: u64,
+    lookback_days: u64,
+    max_articles: usize,
+) -> Result<()> {
+    let bounded = i64::from(limit.clamp(1, 10_000));
+    let candidates = database.list_recipe_rebuild_candidates(bounded).await?;
+
+    if !approve {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "mode": "list",
+                "candidate_count": candidates.len(),
+                "candidates": candidates.iter().map(|c| serde_json::json!({
+                    "company_key": c.company_key,
+                    "company_name": c.company_name,
+                    "reason": c.reason,
+                    "consecutive_failures": c.consecutive_failures,
+                    "stale_at": c.stale_at,
+                    "last_attempt_at": c.last_attempt_at,
+                })).collect::<Vec<_>>(),
+                "hint": "re-run with --approve to enqueue rebuild jobs for these candidates",
+            }))?
+        );
+        return Ok(());
+    }
+
+    if lookback_days == 0 || max_articles == 0 {
+        bail!("lookback-days and max-articles must be positive");
+    }
+    let window_end = Utc::now();
+    let lookback = Duration::from_secs(
+        lookback_days
+            .checked_mul(24 * 60 * 60)
+            .context("lookback-days is too large")?,
+    );
+    let window_start = window_end
+        - chrono::Duration::from_std(lookback).context("lookback is outside chrono range")?;
+    let company_ids: Vec<Uuid> = candidates.iter().map(|c| c.company_id).collect();
+    let (queued_count, first_run_after, last_run_after) = queue_news_extraction_campaign_jobs(
+        database,
+        company_ids,
+        window_start,
+        window_end,
+        max_articles,
+        false,
+        spacing_seconds,
+    )
+    .await?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&serde_json::json!({
+            "mode": "approve",
+            "trigger": "operator_approved_recipe_rebuild",
+            "candidates": candidates.len(),
+            "queued": queued_count,
+            "spacing_seconds": spacing_seconds,
+            "first_run_after": first_run_after,
+            "last_run_after": last_run_after,
+            "window_start": window_start,
+            "window_end": window_end,
+            "max_articles": max_articles,
+        }))?
+    );
     Ok(())
 }
 
