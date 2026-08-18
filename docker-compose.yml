@@ -81,6 +81,10 @@ services:
       RUST_LOG: ${RUST_LOG:-info,feed_worker=debug}
       PUBLIC_FETCH_USER_AGENT: ${PUBLIC_FETCH_USER_AGENT:-CompanyFeedServer/0.1 (+https://github.com/Shuozeli/company-feed-server)}
       WORKER_BIND_ADDR: 0.0.0.0:8081
+      # ResidentialBrowser recipes fetch via a real Chrome over CDP through
+      # dragbv2-browser (scheduled crawls of active ResidentialBrowser recipes).
+      RESIDENTIAL_BROWSER_ENDPOINT: ${RESIDENTIAL_BROWSER_ENDPOINT:-http://dragbv2-browser-k3spod-yuacx.tail8f3b66.ts.net:26420}
+      RESIDENTIAL_BROWSER_CDP_URL: ${RESIDENTIAL_BROWSER_CDP_URL:-http://alienware-win-yuacx:9222}
       OPERATOR_API_TOKEN: ${OPERATOR_API_TOKEN:-}
       RUN_JOBS: ${WORKER_RUN_JOBS:-true}
       SCHEDULE_JOBS: ${WORKER_SCHEDULE_JOBS:-true}
@@ -221,6 +225,10 @@ services:
       RUST_LOG: ${RUST_LOG:-info,feed_news_extraction_worker=debug}
       PUBLIC_FETCH_USER_AGENT: ${PUBLIC_FETCH_USER_AGENT:-CompanyFeedServer/0.1 (+https://github.com/Shuozeli/company-feed-server)}
       NEWS_EXTRACTION_WORKER_BIND_ADDR: 0.0.0.0:8084
+      # ResidentialBrowser recipes (WAF-blocked IR-CMS / JS feeds) fetch via a
+      # real Chrome over CDP through dragbv2-browser. Both must be set to enable.
+      RESIDENTIAL_BROWSER_ENDPOINT: ${RESIDENTIAL_BROWSER_ENDPOINT:-http://dragbv2-browser-k3spod-yuacx.tail8f3b66.ts.net:26420}
+      RESIDENTIAL_BROWSER_CDP_URL: ${RESIDENTIAL_BROWSER_CDP_URL:-http://alienware-win-yuacx:9222}
       OPERATOR_API_TOKEN: ${OPERATOR_API_TOKEN:-}
       RUN_JOBS: ${NEWS_EXTRACTION_RUN_JOBS:-true}
       NEWS_EXTRACTION_RUN_JOBS: ${NEWS_EXTRACTION_RUN_JOBS:-true}
