@@ -463,6 +463,19 @@ impl Database {
                           AND r2.status = 'active'
                           AND COALESCE(st2.rebuild_required, false) = false
                     )
+                    -- exclude companies already covered by a healthy RSS/Atom feed:
+                    -- a stale HTML recipe there is a redundant secondary source and
+                    -- the rebuilder correctly skips it (skipped_healthy_approved_feed_available)
+                    AND NOT EXISTS (
+                        SELECT 1
+                        FROM sources AS fs
+                        JOIN source_state AS fss ON fss.source_id = fs.id
+                        WHERE fs.company_id = c.id
+                          AND fs.status = 'approved'
+                          AND fs.kind IN ('rss', 'atom')
+                          AND fss.last_success_at IS NOT NULL
+                          AND fss.consecutive_failures = 0
+                    )
                 ORDER BY c.id, COALESCE(st.consecutive_failures, 0) DESC
             ) AS q
             ORDER BY consecutive_failures DESC, stale_at ASC NULLS LAST
