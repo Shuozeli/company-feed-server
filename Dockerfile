@@ -1,4 +1,4 @@
-FROM golang:1.26-bookworm AS schema-builder
+FROM golang:1.27-bookworm AS schema-builder
 
 ARG PG_SCHEMA_DIFF_VERSION=v1.0.8
 RUN GOBIN=/out go install \
