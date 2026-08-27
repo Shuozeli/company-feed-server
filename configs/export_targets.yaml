@@ -9,3 +9,16 @@ targets:
     push_enabled: false
     metadata:
       publication_scope: approved_public
+      # v1 dual-write retired: the UI reads v2/ exclusively, so exports no longer
+      # regenerate the ~296k-file legacy v1 tree (its dominant cost). The already-
+      # committed v1 tree freezes. Flip back to true only to resume dual-write.
+      dual_write_v1: false
+      # v2 is published to a dedicated, clean, v2-only repo (its own small history)
+      # so the data host receives tiny incremental pushes without the working repo's
+      # 75G bloat. The PAT is injected from env DATA_HOST_GITHUB_PAT at push time.
+      v2_mirror:
+        enabled: true
+        repo_path: ./exports/cnd-v2-clean
+        remote_url: https://github.com/yuacxshard1/company-news-data.git
+        branch: main
+        pat_env: DATA_HOST_GITHUB_PAT

@@ -1,14 +1,50 @@
 use std::{
     ffi::OsStr,
     fs,
-    path::Path,
+    path::{Path, PathBuf},
     process::{Command, Output},
 };
 
 use chrono::Utc;
 use feed_core::{ExportLayout, ExportTarget, ExportableFeedItem, ExportedItem};
+use serde::Deserialize;
+
+/// Opt-in config (via `export_target.metadata.v2_mirror`) to publish the v2 tree to
+/// a dedicated, clean, v2-only repository with its OWN history + remote, kept
+/// separate from the exporter's heavyweight working repo (which still carries the
+/// frozen v1 tree and a huge history). This is what lets a servable data host
+/// receive tiny incremental pushes without inheriting the working repo's bloat.
+#[derive(Debug, Clone, Deserialize)]
+struct V2Mirror {
+    #[serde(default = "default_true")]
+    enabled: bool,
+    /// Local path of the clean v2-only repo (v2/ lives at its root).
+    repo_path: PathBuf,
+    /// Push URL WITHOUT credentials, e.g. https://github.com/<acct>/<repo>.git.
+    remote_url: String,
+    #[serde(default = "default_main_branch")]
+    branch: String,
+    /// Name of the env var holding the push PAT (injected into the URL at push
+    /// time so it is never persisted in a committed config).
+    #[serde(default = "default_pat_env")]
+    pat_env: String,
+}
+
+fn default_true() -> bool {
+    true
+}
+fn default_main_branch() -> String {
+    "main".to_owned()
+}
+fn default_pat_env() -> String {
+    "DATA_HOST_GITHUB_PAT".to_owned()
+}
 
 mod archive_v1;
+mod archive_v2;
+pub mod selector;
+
+pub use selector::{SelectorTestVector, ShardScheme, canonical_test_vectors, selector};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ExportResult {
@@ -37,7 +73,36 @@ fn export_archive_sync(
     fs::create_dir_all(&target.local_path)?;
     initialize_repository(target)?;
 
-    let records = archive_v1::materialize_archive(&target.local_path, items)?;
+    // The UI now reads `v2/` exclusively, so v2 is always written and is the source
+    // of the returned records. The legacy v1 tree (~296k files) is only re-written
+    // when a target opts back in via `metadata.dual_write_v1 = true`; by default the
+    // dual-write is retired, which is the dominant cost of an export. The already-
+    // committed v1 tree simply freezes (it is not deleted). Absence of the flag keeps
+    // the historical behavior for any target that has not opted out. See the
+    // migration section of docs/design/2026-08-26-time-partitioned-archive.md.
+    let dual_write_v1 = target
+        .metadata
+        .get("dual_write_v1")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
+    let mirror = parse_v2_mirror(&target.metadata)?;
+
+    // v2 is written into the clean mirror repo when configured (its own history +
+    // remote), otherwise into the main working repo (legacy path).
+    let v2_root: PathBuf = match &mirror {
+        Some(m) => {
+            ensure_git_repo(&m.repo_path, &m.branch)?;
+            m.repo_path.clone()
+        }
+        None => target.local_path.clone(),
+    };
+    let records = if dual_write_v1 {
+        let v1_records = archive_v1::materialize_archive(&target.local_path, items)?;
+        archive_v2::materialize_archive(&v2_root, items)?;
+        v1_records
+    } else {
+        archive_v2::materialize_archive(&v2_root, items)?
+    };
 
     let changed = repository_has_owned_changes(&target.local_path)?;
     if changed {
@@ -57,7 +122,7 @@ fn export_archive_sync(
     let commit_sha = git_optional(&target.local_path, ["rev-parse", "HEAD"])?
         .filter(|output| output.status.success())
         .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_owned());
-    let pushed = if target.push_enabled {
+    let main_pushed = if target.push_enabled {
         let Some(_) = commit_sha else {
             return Err(ExportError::Git(
                 "cannot push an archive without a commit".to_owned(),
@@ -77,12 +142,109 @@ fn export_archive_sync(
         false
     };
 
+    // Commit + incrementally push the v2 tree to its dedicated data host.
+    let (mirror_committed, mirror_pushed) = match &mirror {
+        Some(m) => mirror_commit_and_push(m)?,
+        None => (false, false),
+    };
+
     Ok(ExportResult {
+        changed: changed || mirror_committed,
+        pushed: main_pushed || mirror_pushed,
         records,
         commit_sha,
-        pushed,
-        changed,
     })
+}
+
+/// Parse the optional v2-mirror config from a target's metadata. Absent key =>
+/// None (legacy behavior). Present-but-malformed => hard error (fail-fast on a
+/// misconfigured host rather than silently not publishing). Present + enabled:false
+/// => None.
+fn parse_v2_mirror(metadata: &serde_json::Value) -> Result<Option<V2Mirror>, ExportError> {
+    let Some(raw) = metadata.get("v2_mirror") else {
+        return Ok(None);
+    };
+    let mirror: V2Mirror = serde_json::from_value(raw.clone())
+        .map_err(|error| ExportError::Git(format!("invalid v2_mirror config: {error}")))?;
+    Ok(mirror.enabled.then_some(mirror))
+}
+
+fn ensure_git_repo(root: &Path, branch: &str) -> Result<(), ExportError> {
+    fs::create_dir_all(root)?;
+    if !root.join(".git").is_dir() {
+        git(root, ["init", "--initial-branch", branch])?;
+    }
+    if !git_optional(root, ["config", "--get", "user.name"])?
+        .is_some_and(|output| output.status.success())
+    {
+        git(root, ["config", "user.name", "yuacxshard1"])?;
+    }
+    if !git_optional(root, ["config", "--get", "user.email"])?
+        .is_some_and(|output| output.status.success())
+    {
+        git(
+            root,
+            ["config", "user.email", "yuacxshard1@users.noreply.github.com"],
+        )?;
+    }
+    Ok(())
+}
+
+/// Stage the v2 tree in the mirror repo, commit if anything changed, and push
+/// incrementally to the data host. Returns (committed, pushed). A push failure is
+/// logged and swallowed (the local commit is kept and the next export fast-forwards
+/// it) so a transient host outage never fails the export -- the data is already
+/// written locally.
+fn mirror_commit_and_push(mirror: &V2Mirror) -> Result<(bool, bool), ExportError> {
+    git(&mirror.repo_path, ["add", "v2"])?;
+    if mirror.repo_path.join("README.md").exists() {
+        git(&mirror.repo_path, ["add", "README.md"])?;
+    }
+    let status = git(&mirror.repo_path, ["status", "--porcelain"])?;
+    if status.stdout.is_empty() {
+        return Ok((false, false));
+    }
+    let message = format!("v2 export {}", Utc::now().format("%Y-%m-%dT%H:%M:%SZ"));
+    git(&mirror.repo_path, ["commit", "-m", &message])?;
+
+    let pat = std::env::var(&mirror.pat_env).unwrap_or_default();
+    if pat.is_empty() {
+        eprintln!(
+            "[exporter] v2 mirror: env {} is empty; committed locally but NOT pushing (set the PAT to publish)",
+            mirror.pat_env
+        );
+        return Ok((true, false));
+    }
+    let authed = authed_push_url(&mirror.remote_url, &pat);
+    let refspec = format!("HEAD:refs/heads/{}", mirror.branch);
+    match git(
+        &mirror.repo_path,
+        ["push", authed.as_str(), refspec.as_str()],
+    ) {
+        Ok(_) => {
+            // We push to an explicit authed URL (so the PAT is never stored in the
+            // repo config), which does not advance the local remote-tracking ref.
+            // Sync it so the repo's view of origin stays honest and future
+            // `rev-list origin/..HEAD` diagnostics don't grow unbounded.
+            let tracking = format!("refs/remotes/origin/{}", mirror.branch);
+            let _ = git(&mirror.repo_path, ["update-ref", tracking.as_str(), "HEAD"]);
+            Ok((true, true))
+        }
+        Err(error) => {
+            eprintln!(
+                "[exporter] v2 mirror push failed (local commit kept, next export retries): {error}"
+            );
+            Ok((true, false))
+        }
+    }
+}
+
+/// Inject a PAT into an `https://host/...` URL as `https://<pat>@host/...`.
+fn authed_push_url(remote_url: &str, pat: &str) -> String {
+    match remote_url.strip_prefix("https://") {
+        Some(rest) if !pat.is_empty() => format!("https://{pat}@{rest}"),
+        _ => remote_url.to_owned(),
+    }
 }
 
 fn initialize_repository(target: &ExportTarget) -> Result<(), ExportError> {
@@ -146,7 +308,11 @@ fn repository_has_owned_changes(root: &Path) -> Result<bool, ExportError> {
 
 fn existing_owned_pathspecs(root: &Path) -> Result<Vec<&'static str>, ExportError> {
     let mut paths = Vec::new();
-    for owned in archive_v1::OWNED_PATHS {
+    for owned in archive_v1::OWNED_PATHS
+        .iter()
+        .copied()
+        .chain(archive_v2::OWNED_PATHS.iter().copied())
+    {
         let tracked = git_optional(root, ["ls-files", "--", owned])?
             .is_some_and(|output| output.status.success() && !output.stdout.is_empty());
         if root.join(owned).exists() || tracked {
@@ -396,9 +562,92 @@ mod tests {
             String::from_utf8_lossy(&validation.stderr)
         );
 
+        // The v2 dual-write tree must be committed, not left untracked. This is
+        // the regression guard for the `git add --all -- <owned pathspecs>` bug
+        // where v2/ fell outside the owned pathspecs and stayed `?? v2/`.
+        assert!(target.local_path.join("v2/config.json").is_file());
+        let v2_tracked = git(&target.local_path, ["ls-files", "--", "v2"])
+            .expect("git ls-files v2");
+        assert!(
+            !v2_tracked.stdout.is_empty(),
+            "v2/ tree was written but not git-tracked (owned-pathspec regression)"
+        );
+        let v2_status = git(
+            &target.local_path,
+            ["status", "--porcelain", "--untracked-files=all", "--", "v2"],
+        )
+        .expect("git status v2");
+        assert!(
+            v2_status.stdout.is_empty(),
+            "v2/ has uncommitted changes after export: {}",
+            String::from_utf8_lossy(&v2_status.stdout)
+        );
+
         let second = export_archive(target, items).await.expect("second export");
         assert!(!second.changed);
         assert_eq!(second.commit_sha, first.commit_sha);
+    }
+
+    #[tokio::test]
+    async fn dual_write_v1_false_writes_only_v2() {
+        let temporary = TempDir::new().expect("temporary directory");
+        let (mut target, items) = fixture(temporary.path());
+        // Opt out of the legacy v1 dual-write (the post-migration production mode).
+        target.metadata = json!({ "dual_write_v1": false });
+
+        let result = export_archive(target.clone(), items)
+            .await
+            .expect("v2-only export");
+        assert!(result.changed);
+        // v2 tree is written and the records point into it.
+        assert!(target.local_path.join("v2/config.json").is_file());
+        assert!(result.records[0].exported_path.starts_with("v2/data/"));
+        assert!(
+            target
+                .local_path
+                .join(&result.records[0].exported_path)
+                .is_file()
+        );
+        // the heavy v1 article tree is NOT produced.
+        assert!(!target.local_path.join("articles").exists());
+        assert!(!target.local_path.join("index/v1").exists());
+    }
+
+    #[tokio::test]
+    async fn v2_mirror_writes_v2_to_the_mirror_repo_and_commits_it() {
+        let temporary = TempDir::new().expect("temporary directory");
+        let (mut target, items) = fixture(temporary.path());
+        let mirror_path = temporary.path().join("mirror");
+        target.metadata = json!({
+            "dual_write_v1": false,
+            "v2_mirror": {
+                "enabled": true,
+                "repo_path": mirror_path.to_str().unwrap(),
+                "remote_url": "https://github.com/example/company-news-data.git",
+                "branch": "main",
+                // point at an env var that is unset so the test never hits the network
+                "pat_env": "EXPORTER_TEST_UNSET_PAT",
+            },
+        });
+
+        let result = export_archive(target.clone(), items)
+            .await
+            .expect("mirror export");
+        assert!(result.changed);
+        // v2 went to the MIRROR repo, not the main working repo.
+        assert!(mirror_path.join("v2/config.json").is_file());
+        assert!(!target.local_path.join("v2/config.json").exists());
+        // the mirror repo committed the v2 tree (nothing left uncommitted).
+        let mirror_status = git(&mirror_path, ["status", "--porcelain"]).expect("git status");
+        assert!(
+            mirror_status.stdout.is_empty(),
+            "mirror repo has uncommitted changes: {}",
+            String::from_utf8_lossy(&mirror_status.stdout)
+        );
+        let tracked = git(&mirror_path, ["ls-files", "--", "v2"]).expect("ls-files");
+        assert!(!tracked.stdout.is_empty(), "v2/ must be tracked in the mirror repo");
+        // records point into the v2 tree.
+        assert!(result.records[0].exported_path.starts_with("v2/data/"));
     }
 
     #[tokio::test]

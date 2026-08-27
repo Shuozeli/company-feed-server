@@ -1,0 +1,90 @@
+{
+  "algorithm": "bucket = u32_be(sha256(salt || 0x00 || key)[0..4]) % bucket_count",
+  "note": "Rust and JS (company-news-ui) MUST both reproduce these exactly.",
+  "vectors": [
+    {
+      "bucket": 13,
+      "bucket_count": 16,
+      "key": "apple",
+      "salt": "cnd/articles/v1"
+    },
+    {
+      "bucket": 13,
+      "bucket_count": 16,
+      "key": "amazon-com-inc-common-stock",
+      "salt": "cnd/articles/v1"
+    },
+    {
+      "bucket": 1,
+      "bucket_count": 16,
+      "key": "0000000000000000000000000000000000000000000000000000000000000000",
+      "salt": "cnd/articles/v1"
+    },
+    {
+      "bucket": 11,
+      "bucket_count": 16,
+      "key": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "salt": "cnd/articles/v1"
+    },
+    {
+      "bucket": 11,
+      "bucket_count": 16,
+      "key": "a3f19c7b2e4d",
+      "salt": "cnd/articles/v1"
+    },
+    {
+      "bucket": 12,
+      "bucket_count": 16,
+      "key": "the-quick-brown-fox",
+      "salt": "cnd/articles/v1"
+    },
+    {
+      "bucket": 14,
+      "bucket_count": 16,
+      "key": "",
+      "salt": "cnd/articles/v1"
+    },
+    {
+      "bucket": 3,
+      "bucket_count": 16,
+      "key": "apple",
+      "salt": "cnd/companies/v1"
+    },
+    {
+      "bucket": 8,
+      "bucket_count": 16,
+      "key": "amazon-com-inc-common-stock",
+      "salt": "cnd/companies/v1"
+    },
+    {
+      "bucket": 10,
+      "bucket_count": 16,
+      "key": "0000000000000000000000000000000000000000000000000000000000000000",
+      "salt": "cnd/companies/v1"
+    },
+    {
+      "bucket": 10,
+      "bucket_count": 16,
+      "key": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "salt": "cnd/companies/v1"
+    },
+    {
+      "bucket": 1,
+      "bucket_count": 16,
+      "key": "a3f19c7b2e4d",
+      "salt": "cnd/companies/v1"
+    },
+    {
+      "bucket": 1,
+      "bucket_count": 16,
+      "key": "the-quick-brown-fox",
+      "salt": "cnd/companies/v1"
+    },
+    {
+      "bucket": 5,
+      "bucket_count": 16,
+      "key": "",
+      "salt": "cnd/companies/v1"
+    }
+  ]
+}
