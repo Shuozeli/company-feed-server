@@ -37,4 +37,7 @@ pub use recipe::{
     RecipeFreshnessPolicy, RecipeHealth, RecipeItemScope, RecipeRenderMode, RecipeRunStatus,
     RecipeSpecError, RecipeStatus,
 };
-pub use url_policy::{has_invalid_resource_query, is_sitemap_url, resource_query_pairs};
+pub use url_policy::{
+    has_invalid_resource_query, is_news_scoped_url, is_sitemap_url, news_score,
+    resource_query_pairs, url_is_sitemap,
+};

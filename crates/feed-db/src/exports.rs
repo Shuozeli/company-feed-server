@@ -454,7 +454,8 @@ impl Database {
                     ) AS duplicate_rank
                 FROM canonical_ranked_items AS canonical_item
                 WHERE canonical_item.canonical_duplicate_rank = 1
-            )
+            ),
+            exportable AS (
             SELECT
                 item.id,
                 item.company_id,
@@ -542,10 +543,32 @@ impl Database {
                 ON exported.target_id = $1
                 AND exported.feed_item_id = item.id
             WHERE selected.duplicate_rank = 1
+            )
+            -- After the share-class merge, the same canonical_url can appear
+            -- under two source share-class keys that now map to one canonical
+            -- company_key; those would hash to the same document id and trip the
+            -- exporter uniqueness invariant. Keep one row per (canonical
+            -- company_key, url identity). No-op for non-merged companies.
+            SELECT deduped.*
+            FROM (
+                SELECT
+                    exportable.*,
+                    row_number() OVER (
+                        PARTITION BY
+                            exportable.company_key,
+                            public_url_identity_key(exportable.canonical_url)
+                        ORDER BY
+                            exportable.published_at ASC NULLS LAST,
+                            exportable.fetched_at ASC,
+                            exportable.id
+                    ) AS canonical_company_dedup_rank
+                FROM exportable
+            ) AS deduped
+            WHERE deduped.canonical_company_dedup_rank = 1
             ORDER BY
-                item.published_at ASC NULLS LAST,
-                item.fetched_at ASC,
-                item.id
+                deduped.published_at ASC NULLS LAST,
+                deduped.fetched_at ASC,
+                deduped.id
             "#,
         )
         .bind(export_target_id)

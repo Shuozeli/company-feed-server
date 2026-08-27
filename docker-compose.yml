@@ -90,6 +90,11 @@ services:
       SCHEDULE_JOBS: ${WORKER_SCHEDULE_JOBS:-true}
       COMPANIES_CONFIG: ${COMPANIES_CONFIG:-/app/configs/companies.yaml}
       EXPORT_TARGETS_CONFIG: ${EXPORT_TARGETS_CONFIG:-/app/configs/export_targets.yaml}
+      # PAT for pushing the v2 archive to its data host (yuacxshard1). Injected into
+      # the push URL by the exporter's v2_mirror step. Supplied via the gitignored
+      # .env (this is a PUBLIC repo -- never inline the token here). Value is
+      # YUACXSHARD1_GITHUB_PAT in dragb/secrets-registry.md.
+      DATA_HOST_GITHUB_PAT: ${DATA_HOST_GITHUB_PAT:-}
     ports:
       - "127.0.0.1:${WORKER_PORT:-8081}:8081"
     volumes:
@@ -163,6 +168,7 @@ services:
       WEB_DISCOVERY_ADAPTER_MAX_RESPONSE_BYTES: ${WEB_DISCOVERY_ADAPTER_MAX_RESPONSE_BYTES:-1048576}
       WEB_DISCOVERY_ADAPTER_MAX_CANDIDATES: ${WEB_DISCOVERY_ADAPTER_MAX_CANDIDATES:-20}
       DISCOVERY_ALLOW_PRIVATE_NETWORKS: ${DISCOVERY_ALLOW_PRIVATE_NETWORKS:-false}
+      DISCOVERY_PROBE_SITEMAPS: ${DISCOVERY_PROBE_SITEMAPS:-false}
     ports:
       - "127.0.0.1:${DISCOVERY_WORKER_PORT:-8082}:8082"
     volumes:

@@ -7,6 +7,25 @@ All notable changes will be recorded here. The project follows
 
 ### Added
 
+- Sitemap crawl tier (`SourceKind::Sitemap` + `SitemapCrawler`) between the
+  RSS/Atom and HTML-recipe tiers: parses `<urlset>`/`<sitemapindex>` (incl.
+  `<urlset>`-of-child-sitemaps), derives publish dates from
+  `news:publication_date`/`lastmod`/URL-path, keeps news-scoped editorial
+  entries, and emits `RawCrawlItem`s through the unchanged normalize pipeline.
+  Dark-launched on Apple/Amazon/Broadcom.
+- Sitemap auto-discovery (`DISCOVERY_PROBE_SITEMAPS`, default off): discovery
+  probes robots.txt + common sitemap paths and emits ranked news-scoped
+  `SourceKind::Sitemap` candidates; the validation worker crawls + accepts them
+  (>= 3 dated editorial articles) and activates a sitemap source; the scheduler
+  crawls sitemap sources and they count as a healthy feed (suppressing HTML-recipe
+  building). The sitemap crawl DISCOVERS article URLs then reuses the shared
+  `HtmlArticleCrawler` to fetch each article's title + body (so items normalize).
+  Verified end to end on the compose fleet: Apple/Amazon sitemaps produced 45
+  `source_kind='sitemap'` feed_items.
+- Incremental sitemap crawls: a per-source date watermark in `source_state.cursor`
+  means steady-state crawls fetch only new articles plus lastmod-bumped (re-edited)
+  ones; re-fetched changed articles update the existing feed_item (re-snapshot) via
+  the existing conflict-update path. Lastmod-less sitemaps fetch new-only.
 - Name-first company registry for public and private companies.
 - Separated API, discovery, validation, crawl/export, and manual recipe-build
   runtimes.

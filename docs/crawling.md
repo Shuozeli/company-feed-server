@@ -1,3 +1,5 @@
+<!-- agent-updated: 2026-08-24T00:00:00Z -->
+
 # Crawling
 
 Crawling runs only on approved public sources and is owned by `feed-worker`.
@@ -43,6 +45,49 @@ Responsibilities:
 - derive external ID from GUID, URL, or title/date hash
 - preserve feed metadata in `raw`
 - emit `RawCrawlItem`
+
+## Delivered Sitemap Adapter
+
+The discovery preference is RSS/Atom first, then a news-scoped **sitemap**, then
+an HTML listing-page recipe as the last resort. `SitemapCrawler` (parallel to the
+RSS/Atom crawler) owns the middle tier for `SourceKind::Sitemap` sources. A
+newsroom sitemap is a rate-limit-friendly, structurally stable article-URL
+inventory, so it is preferred over fragile listing-page CSS scraping when no feed
+exists. See `docs/design/2026-08-24-sitemap-discovery-tier.md`.
+
+Responsibilities:
+
+- fetch the sitemap URL with the same SSRF guards, redirect handling, and size
+  cap as the feed crawler (shared `fetch_public_document`)
+- parse `<urlset>` and `<sitemapindex>`; recurse one level into news-scoped child
+  sitemaps, including the non-standard case where a `<urlset>` lists `.xml` child
+  sitemaps as its entries (verified: Broadcom)
+- derive each article's publish date from `<news:publication_date>`, then
+  `<lastmod>`, then a `/YYYY/MM(/DD)?/` or `/YYYY-MM-DD/` date embedded in the URL
+  path (verified: Apple's newsroom sitemap carries neither date tag)
+- keep only editorial-scoped entries (news/newsroom/press/media/blog tokens),
+  dropping shop/retail/product/support inventories the historical
+  sitemap-rejection guard was protecting against
+- rank most-recent first, bound to the item limit, and emit `RawCrawlItem`s
+  carrying only URL + derived date; titles and bodies are hydrated by the
+  downstream content stage (so the feed title-diversity gate does not apply)
+- fetch each retained article's title + body with the SAME `HtmlArticleCrawler`
+  the HTML-recipe path uses (discovery finds URLs; crawling fetches content), so
+  sitemap items normalize like any other article
+- crawl incrementally via a per-source date watermark in `source_state.cursor`:
+  entries carrying a mutable `<lastmod>`/`<news:publication_date>` are fetched only
+  when newer than the watermark (new + re-edited -> the re-fetch updates the
+  existing feed_item, i.e. re-snapshot); entries with only an immutable URL-path
+  date always pass the watermark and rely on dedup ("new-only", no periodic full
+  re-snapshot)
+- emit per-run metrics (entries total / dated / editorial / dated-editorial /
+  child sitemaps fetched / discovered_urls / articles_fetched / sitemap_watermark)
+  so a sitemap that resolves to a product inventory is visible rather than
+  silently accepted
+
+Note: the RSS/Atom adapter still rejects a sitemap that a CMS serves with RSS
+syntax; sitemaps are handled only through this dedicated tier as their own
+`SourceKind`, never parsed as feeds.
 
 ## Delivered HTML Recipe Adapter
 

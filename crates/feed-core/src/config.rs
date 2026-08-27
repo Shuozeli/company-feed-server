@@ -263,6 +263,7 @@ pub struct AppSettings {
     pub discovery_max_concurrency: usize,
     pub discovery_max_candidates: usize,
     pub discovery_probe_common_paths: bool,
+    pub discovery_probe_sitemaps: bool,
     pub discovery_allow_private_networks: bool,
     pub web_discovery_adapter_mode: WebDiscoveryAdapterMode,
     pub web_discovery_adapter_url: Option<Url>,
@@ -438,6 +439,7 @@ impl AppSettings {
         let discovery_max_candidates =
             parse_env("DISCOVERY_MAX_CANDIDATES", DEFAULT_DISCOVERY_MAX_CANDIDATES)?;
         let discovery_probe_common_paths = parse_env("DISCOVERY_PROBE_COMMON_PATHS", true)?;
+        let discovery_probe_sitemaps = parse_env("DISCOVERY_PROBE_SITEMAPS", false)?;
         let discovery_allow_private_networks =
             parse_env("DISCOVERY_ALLOW_PRIVATE_NETWORKS", false)?;
         if scheduler_scan_interval.is_zero()
@@ -685,6 +687,7 @@ impl AppSettings {
             discovery_max_concurrency,
             discovery_max_candidates,
             discovery_probe_common_paths,
+            discovery_probe_sitemaps,
             discovery_allow_private_networks,
             web_discovery_adapter_mode,
             web_discovery_adapter_url,

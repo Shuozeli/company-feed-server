@@ -1,3 +1,5 @@
+<!-- agent-updated: 2026-08-25T00:00:00Z -->
+
 # Publication Model
 
 This document records the intended publication model for the public archive
@@ -66,3 +68,29 @@ aliases), and multiple share classes of one legal entity are presented as a
 single company. Rights or provenance conflicts discovered after publication are
 handled through the routes above and by excluding the affected source or record
 from subsequent generations.
+
+## Publishing to GitHub -- INCREMENTAL ONLY (do not orphan-force-push)
+
+The public archive lives at `datayuacx26/company-news-data` and is read by the
+`company-news-ui` SPA over `raw.githubusercontent.com`. The exporter writes/commits
+the export LOCALLY only (`export_targets.yaml` sets `push_enabled: false`); pushing
+to GitHub is a separate, deliberate step.
+
+**Incident (2026-08-25):** the old `pub_push.sh` did `git checkout --orphan` +
+`git add -A` (~154k files / ~1GB) + `git push --force` on every publish, rewriting
+the whole tree/history each time, while `raw.githubusercontent` was used as a
+high-frequency CDN. GitHub's abuse detection SUSPENDED the `datayuacx26` account
+(all repos + raw 404 anonymously). Appeal ticket **#4698709** was filed from
+`yuanchenxi2026@gmail.com` (the account email; logged in on alienware Chrome CDP
+`:9403`). See memory `datayuacx26-github-suspended-incident`.
+
+**Rules:**
+- **Never orphan-force-push the whole tree.** Publish with
+  `scripts/publish-company-news-data.sh` -- a normal commit + fast-forward
+  `git push` that sends only the diff and refuses `--force`.
+- The ONLY sanctioned force-push is `scripts/publish-baseline-oneshot.sh`, run
+  EXACTLY ONCE after an account restore (or a needed history reset) to establish a
+  single-commit baseline; after that, incremental only.
+- **Push infrequently** (daily / on-demand, not hourly). Keep `.git` lean (periodic
+  gc, not per-push). Do not use `raw.githubusercontent` as a high-frequency CDN.
+- While the account is suspended, do NOT push to / call datayuacx26 at all.

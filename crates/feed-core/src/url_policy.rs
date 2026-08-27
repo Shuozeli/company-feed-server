@@ -42,6 +42,85 @@ pub fn is_sitemap_url(url: &Url) -> bool {
             .any(|(key, value)| contains_sitemap_token(&key) || contains_sitemap_token(&value))
 }
 
+/// Editorial path/host tokens that mark a sitemap (or the URLs inside it) as
+/// news-scoped. Used to pick the news sitemap among several and to gate
+/// sitemap-source acceptance.
+const NEWS_TOKENS: &[&str] = &[
+    "news",
+    "newsroom",
+    "press",
+    "pressroom",
+    "media",
+    "blog",
+    "article",
+    "articles",
+    "story",
+    "stories",
+    "announcement",
+    "announcements",
+    "insights",
+];
+
+/// Non-editorial tokens that mark a sitemap as NOT a news source. These are the
+/// URL inventories the sitemap-rejection guard was protecting against.
+const NON_NEWS_TOKENS: &[&str] = &[
+    "shop",
+    "store",
+    "retail",
+    "product",
+    "products",
+    "catalog",
+    "today",
+    "support",
+    "legal",
+    "career",
+    "careers",
+    "job",
+    "jobs",
+    "category",
+    "categories",
+    "tag",
+    "tags",
+    "author",
+    "image",
+    "images",
+    "video",
+    "videos",
+];
+
+/// Net editorial score of a URL: (+1 per news token) - (1 per non-news token),
+/// counted over host + path. Positive => news-scoped.
+pub fn news_score(url: &Url) -> i32 {
+    let haystack = format!("{}{}", url.host_str().unwrap_or_default(), url.path())
+        .to_ascii_lowercase();
+    let tokens: Vec<&str> = haystack
+        .split(|character: char| !character.is_ascii_alphanumeric())
+        .filter(|token| !token.is_empty())
+        .collect();
+    let positive = tokens
+        .iter()
+        .filter(|token| NEWS_TOKENS.contains(token))
+        .count() as i32;
+    let negative = tokens
+        .iter()
+        .filter(|token| NON_NEWS_TOKENS.contains(token))
+        .count() as i32;
+    positive - negative
+}
+
+/// A sitemap URL is news-scoped if it (or its typical entries) lean editorial.
+pub fn is_news_scoped_url(url: &Url) -> bool {
+    news_score(url) > 0
+}
+
+/// True when a URL points at another sitemap document (path ends in `.xml`).
+/// Some sites (verified: Broadcom) serve a `<urlset>` whose entries are child
+/// sitemaps rather than the standard `<sitemapindex>`; those must be recursed
+/// into, not emitted as articles.
+pub fn url_is_sitemap(url: &Url) -> bool {
+    url.path().to_ascii_lowercase().ends_with(".xml")
+}
+
 /// Returns the bounded query fields that identify an editorial resource.
 ///
 /// Locale, filter, pagination, analytics, and arbitrary scanner parameters do

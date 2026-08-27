@@ -641,7 +641,7 @@ async fn queue_crawl(database: &Database, source_id: Option<Uuid>) -> Result<()>
 
     for source in sources {
         let supported = match source.kind {
-            SourceKind::Rss | SourceKind::Atom => true,
+            SourceKind::Rss | SourceKind::Atom | SourceKind::Sitemap => true,
             SourceKind::Html | SourceKind::Browser if explicit_source => database
                 .get_active_company_news_recipe_for_source(source.id)
                 .await?

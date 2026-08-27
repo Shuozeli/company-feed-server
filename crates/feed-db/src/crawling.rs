@@ -76,7 +76,7 @@ impl Database {
             WHERE
                 source.status = 'approved'
                 AND (
-                    source.kind IN ('rss', 'atom')
+                    source.kind IN ('rss', 'atom', 'sitemap')
                     OR (
                         source.kind IN ('html', 'browser')
                         AND EXISTS (
@@ -490,6 +490,30 @@ impl Database {
         Ok(quarantined_count)
     }
 
+    /// Read a sitemap source's incremental watermark (max article date processed
+    /// on the previous crawl) from `source_state.cursor`. `None` on first crawl.
+    pub async fn get_source_sitemap_watermark(
+        &self,
+        source_id: Uuid,
+    ) -> Result<Option<DateTime<Utc>>, DatabaseError> {
+        let raw: Option<String> = sqlx::query_scalar(
+            r#"
+            SELECT cursor->>'sitemap_watermark'
+            FROM source_state
+            WHERE source_id = $1
+            "#,
+        )
+        .bind(source_id)
+        .fetch_optional(self.pool())
+        .await?
+        .flatten();
+        Ok(raw.and_then(|value| {
+            DateTime::parse_from_rfc3339(&value)
+                .ok()
+                .map(|parsed| parsed.with_timezone(&Utc))
+        }))
+    }
+
     pub async fn complete_crawl_run(
         &self,
         run_id: Uuid,
@@ -820,6 +844,12 @@ impl Database {
             summary.normalized_item_count += 1;
         }
 
+        // Capture the incremental sitemap watermark before `metadata` is moved
+        // into the crawl_runs update below.
+        let sitemap_watermark = metadata
+            .get("sitemap_watermark")
+            .filter(|value| !value.is_null())
+            .cloned();
         let result = sqlx::query(
             r#"
             UPDATE crawl_runs
@@ -892,7 +922,15 @@ impl Database {
         )
         .bind(source.id)
         .bind(summary.item_count)
-        .bind(json!({ "last_fetched_at": fetched_at }))
+        .bind({
+            // Preserve the incremental sitemap watermark (max article date seen)
+            // so the next crawl only reconsiders strictly-newer entries.
+            let mut cursor = json!({ "last_fetched_at": fetched_at });
+            if let Some(watermark) = &sitemap_watermark {
+                cursor["sitemap_watermark"] = watermark.clone();
+            }
+            cursor
+        })
         .execute(&mut *transaction)
         .await?;
         sqlx::query(

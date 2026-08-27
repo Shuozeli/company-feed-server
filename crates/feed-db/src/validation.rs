@@ -378,7 +378,7 @@ impl Database {
                 FROM source_candidates AS candidate
                 WHERE
                     candidate.status = 'new'
-                    AND candidate.candidate_kind IN ('rss', 'atom')
+                    AND candidate.candidate_kind IN ('rss', 'atom', 'sitemap')
                     AND (
                         $3::boolean
                         OR NOT EXISTS (
@@ -654,7 +654,7 @@ impl Database {
             WHERE
                 id = $1
                 AND status = 'new'
-                AND candidate_kind IN ('rss', 'atom')
+                AND candidate_kind IN ('rss', 'atom', 'sitemap')
             RETURNING id
             "#,
         )

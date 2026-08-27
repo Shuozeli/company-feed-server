@@ -1,6 +1,10 @@
 mod browser_fetch;
+pub mod sitemap;
 
 pub use browser_fetch::{BrowserFetchConfig, BrowserFetchError, BrowserFetcher};
+pub use sitemap::{
+    NewsAcceptance, SitemapDoc, SitemapEntry, SitemapError, news_acceptance, parse_sitemap,
+};
 
 /// Generic content container to wait for when browser-fetching an article body,
 /// so the capture happens after any WAF interstitial / client-side render clears
@@ -83,85 +87,323 @@ impl RssAtomCrawler {
         if !matches!(source.kind, SourceKind::Rss | SourceKind::Atom) {
             return Err(CrawlError::UnsupportedSourceKind(source.kind));
         }
-        validate_url(&source.url)?;
-        let mut current_url = source.url.clone();
-        for redirect_count in 0..=5 {
-            validate_url(&current_url)?;
-            if !self.config.allow_private_networks {
-                validate_feed_resolved_target(&current_url).await?;
-            }
-            let response = self
-                .client
-                .get(current_url.clone())
-                .send()
-                .await
-                .map_err(|error| CrawlError::Request {
-                    url: current_url.clone(),
-                    message: error.to_string(),
-                })?;
-            if !self.config.allow_private_networks {
-                let remote_address =
-                    response
-                        .remote_addr()
-                        .ok_or_else(|| CrawlError::RemoteAddressUnavailable {
-                            url: current_url.clone(),
-                        })?;
-                if !is_public_ip(remote_address.ip()) {
-                    return Err(CrawlError::PrivateNetwork {
-                        url: current_url,
-                        address: remote_address.ip(),
-                    });
-                }
-            }
-            if response.status().is_redirection() {
-                if redirect_count == 5 {
-                    return Err(CrawlError::TooManyRedirects { url: current_url });
-                }
-                let location = response
-                    .headers()
-                    .get(LOCATION)
-                    .and_then(|value| value.to_str().ok())
-                    .ok_or_else(|| CrawlError::InvalidRedirect {
+        let limits = FetchLimits {
+            max_response_bytes: self.config.max_response_bytes,
+            allow_private_networks: self.config.allow_private_networks,
+        };
+        let (final_url, bytes) = fetch_public_document(&self.client, &source.url, &limits).await?;
+        parse_feed_body(&final_url, &bytes, self.config.max_items)
+    }
+}
+
+/// Fetch limits shared by the feed and sitemap fetch paths.
+#[derive(Clone, Copy, Debug)]
+struct FetchLimits {
+    max_response_bytes: usize,
+    allow_private_networks: bool,
+}
+
+/// Fetch a public document with the same SSRF guards, redirect handling, and
+/// size cap the feed crawler uses. Returns the final URL and the body bytes.
+async fn fetch_public_document(
+    client: &Client,
+    start_url: &Url,
+    limits: &FetchLimits,
+) -> Result<(Url, Vec<u8>), CrawlError> {
+    validate_url(start_url)?;
+    let mut current_url = start_url.clone();
+    for redirect_count in 0..=5 {
+        validate_url(&current_url)?;
+        if !limits.allow_private_networks {
+            validate_feed_resolved_target(&current_url).await?;
+        }
+        let response = client
+            .get(current_url.clone())
+            .send()
+            .await
+            .map_err(|error| CrawlError::Request {
+                url: current_url.clone(),
+                message: error.to_string(),
+            })?;
+        if !limits.allow_private_networks {
+            let remote_address =
+                response
+                    .remote_addr()
+                    .ok_or_else(|| CrawlError::RemoteAddressUnavailable {
                         url: current_url.clone(),
                     })?;
-                current_url = resolve_feed_redirect(&current_url, location)?;
-                continue;
-            }
-            if !response.status().is_success() {
-                return Err(CrawlError::HttpStatus {
+            if !is_public_ip(remote_address.ip()) {
+                return Err(CrawlError::PrivateNetwork {
                     url: current_url,
-                    status: response.status().as_u16(),
+                    address: remote_address.ip(),
                 });
             }
-            if response
-                .content_length()
-                .is_some_and(|length| length > self.config.max_response_bytes as u64)
-            {
-                return Err(CrawlError::ResponseTooLarge {
-                    url: current_url,
-                    limit: self.config.max_response_bytes,
-                });
-            }
-            let final_url = current_url;
-            let mut bytes = Vec::new();
-            let mut stream = response.bytes_stream();
-            while let Some(chunk) = stream.next().await {
-                let chunk = chunk.map_err(|error| CrawlError::Request {
-                    url: final_url.clone(),
-                    message: error.to_string(),
-                })?;
-                if bytes.len().saturating_add(chunk.len()) > self.config.max_response_bytes {
-                    return Err(CrawlError::ResponseTooLarge {
-                        url: final_url,
-                        limit: self.config.max_response_bytes,
-                    });
-                }
-                bytes.extend_from_slice(&chunk);
-            }
-
-            return parse_feed_body(&final_url, &bytes, self.config.max_items);
         }
-        unreachable!("feed redirect loop returns after success or the sixth redirect")
+        if response.status().is_redirection() {
+            if redirect_count == 5 {
+                return Err(CrawlError::TooManyRedirects { url: current_url });
+            }
+            let location = response
+                .headers()
+                .get(LOCATION)
+                .and_then(|value| value.to_str().ok())
+                .ok_or_else(|| CrawlError::InvalidRedirect {
+                    url: current_url.clone(),
+                })?;
+            current_url = resolve_feed_redirect(&current_url, location)?;
+            continue;
+        }
+        if !response.status().is_success() {
+            return Err(CrawlError::HttpStatus {
+                url: current_url,
+                status: response.status().as_u16(),
+            });
+        }
+        if response
+            .content_length()
+            .is_some_and(|length| length > limits.max_response_bytes as u64)
+        {
+            return Err(CrawlError::ResponseTooLarge {
+                url: current_url,
+                limit: limits.max_response_bytes,
+            });
+        }
+        let final_url = current_url;
+        let mut bytes = Vec::new();
+        let mut stream = response.bytes_stream();
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.map_err(|error| CrawlError::Request {
+                url: final_url.clone(),
+                message: error.to_string(),
+            })?;
+            if bytes.len().saturating_add(chunk.len()) > limits.max_response_bytes {
+                return Err(CrawlError::ResponseTooLarge {
+                    url: final_url,
+                    limit: limits.max_response_bytes,
+                });
+            }
+            bytes.extend_from_slice(&chunk);
+        }
+        return Ok((final_url, bytes));
+    }
+    unreachable!("redirect loop returns after success or the sixth redirect")
+}
+
+#[derive(Clone, Debug)]
+pub struct SitemapCrawlerConfig {
+    pub request_timeout: Duration,
+    pub max_response_bytes: usize,
+    /// Pool of most-recent sitemap entries to rank before fetching articles.
+    pub max_items: usize,
+    /// Articles actually fetched (title + body) per crawl.
+    pub max_articles: usize,
+    /// When the sitemap is an index, how many news-scoped child sitemaps to fetch.
+    pub max_child_sitemaps: usize,
+    pub max_concurrency: usize,
+    pub max_per_host_concurrency: usize,
+    pub min_content_chars: usize,
+    pub allow_private_networks: bool,
+    pub user_agent: String,
+    /// Optional residential-browser fetch for WAF-blocked article pages.
+    pub browser: Option<BrowserFetchConfig>,
+}
+
+impl Default for SitemapCrawlerConfig {
+    fn default() -> Self {
+        Self {
+            request_timeout: Duration::from_secs(20),
+            max_response_bytes: 16 * 1024 * 1024,
+            max_items: 200,
+            max_articles: 40,
+            max_child_sitemaps: 4,
+            max_concurrency: 4,
+            max_per_host_concurrency: 2,
+            min_content_chars: 200,
+            allow_private_networks: false,
+            user_agent: DEFAULT_PUBLIC_FETCH_USER_AGENT.to_owned(),
+            browser: None,
+        }
+    }
+}
+
+/// Crawls a news-scoped sitemap. Discovery = parse the sitemap into article URLs;
+/// crawling = fetch each article's title + body with the SAME `HtmlArticleCrawler`
+/// the HTML-recipe path uses, so sitemap items normalize like any other article.
+/// See docs/design/2026-08-24-sitemap-discovery-tier.md.
+#[derive(Clone)]
+pub struct SitemapCrawler {
+    client: Client,
+    article_crawler: HtmlArticleCrawler,
+    config: SitemapCrawlerConfig,
+}
+
+impl SitemapCrawler {
+    pub fn new(config: SitemapCrawlerConfig) -> Result<Self, CrawlError> {
+        if config.max_response_bytes == 0
+            || config.max_items == 0
+            || config.max_articles == 0
+        {
+            return Err(CrawlError::InvalidConfig(
+                "sitemap crawler response and item limits must be positive".to_owned(),
+            ));
+        }
+        let client = Client::builder()
+            .connect_timeout(config.request_timeout)
+            .timeout(config.request_timeout)
+            .redirect(Policy::none())
+            .no_proxy()
+            .user_agent(&config.user_agent)
+            .build()?;
+        let article_crawler = HtmlArticleCrawler::new(HtmlArticleCrawlerConfig {
+            request_timeout: config.request_timeout,
+            max_response_bytes: config.max_response_bytes,
+            max_articles: config.max_articles,
+            max_concurrency: config.max_concurrency,
+            max_per_host_concurrency: config.max_per_host_concurrency,
+            min_content_chars: config.min_content_chars,
+            allow_private_networks: config.allow_private_networks,
+            user_agent: config.user_agent.clone(),
+            browser: config.browser.clone(),
+        })
+        .map_err(|error| CrawlError::InvalidConfig(error.to_string()))?;
+        Ok(Self {
+            client,
+            article_crawler,
+            config,
+        })
+    }
+
+    /// `since` is the incremental watermark (max article date processed on the
+    /// previous crawl). Only entries whose date is newer are fetched, so a
+    /// steady-state crawl fetches just new articles plus lastmod-bumped
+    /// (re-edited) ones. Pass `None` for a full crawl (first run / validation).
+    pub async fn crawl(
+        &self,
+        source: &Source,
+        since: Option<DateTime<Utc>>,
+    ) -> Result<CrawlBatch, CrawlError> {
+        if source.kind != SourceKind::Sitemap {
+            return Err(CrawlError::UnsupportedSourceKind(source.kind));
+        }
+        let limits = FetchLimits {
+            max_response_bytes: self.config.max_response_bytes,
+            allow_private_networks: self.config.allow_private_networks,
+        };
+        let (final_url, bytes) =
+            fetch_public_document(&self.client, &source.url, &limits).await?;
+        let doc = sitemap::parse_sitemap(&bytes)
+            .map_err(|error| CrawlError::InvalidFeed(error.to_string()))?;
+
+        // Split into article entries and child sitemaps. A `<sitemapindex>`
+        // yields children directly; a `<urlset>` may still list child sitemaps
+        // as `.xml` entries (Broadcom), which must be recursed, not emitted.
+        let (mut entries, child_sitemaps): (Vec<SitemapEntry>, Vec<Url>) = match doc {
+            SitemapDoc::Index(children) => (Vec::new(), children),
+            SitemapDoc::UrlSet(url_entries) => {
+                let mut articles = Vec::new();
+                let mut children = Vec::new();
+                for entry in url_entries {
+                    if sitemap::url_is_sitemap(&entry.loc) {
+                        children.push(entry.loc);
+                    } else {
+                        articles.push(entry);
+                    }
+                }
+                (articles, children)
+            }
+        };
+
+        let mut child_sitemaps_fetched = 0_usize;
+        if !child_sitemaps.is_empty() {
+            let mut chosen: Vec<Url> = child_sitemaps
+                .iter()
+                .filter(|url| sitemap::is_news_scoped_url(url))
+                .cloned()
+                .collect();
+            if chosen.is_empty() {
+                chosen = child_sitemaps;
+            }
+            for child in chosen.into_iter().take(self.config.max_child_sitemaps) {
+                if let Ok((_, child_bytes)) =
+                    fetch_public_document(&self.client, &child, &limits).await
+                {
+                    child_sitemaps_fetched += 1;
+                    if let Ok(SitemapDoc::UrlSet(child_entries)) =
+                        sitemap::parse_sitemap(&child_bytes)
+                    {
+                        // Only real article pages from the child, never further
+                        // nested sitemaps (bounded to one level of recursion).
+                        entries.extend(
+                            child_entries
+                                .into_iter()
+                                .filter(|entry| !sitemap::url_is_sitemap(&entry.loc)),
+                        );
+                    }
+                }
+            }
+        }
+
+        let acceptance = sitemap::news_acceptance(&entries);
+        // DISCOVERY: keep the most recent editorial URLs first, bound the pool.
+        let mut ranked: Vec<SitemapEntry> = entries
+            .into_iter()
+            .filter(|entry| sitemap::news_score(&entry.loc) >= 0)
+            .collect();
+        ranked.sort_by(|left, right| right.published_at().cmp(&left.published_at()));
+        ranked.truncate(self.config.max_items);
+        let discovered_url_count = ranked.len();
+        // The watermark advances on the MUTABLE signal only (lastmod/news_date),
+        // so lastmod-less sitemaps (immutable URL-path dates) never advance it and
+        // are handled by dedup instead of the watermark.
+        let new_watermark = ranked.iter().filter_map(|entry| entry.change_signal()).max();
+
+        // INCREMENTAL: for entries carrying a change signal, keep only those newer
+        // than the previous watermark (new + lastmod-bumped re-edits -> re-snapshot).
+        // Entries with no change signal are always eligible (dedup keeps only new).
+        // CRAWLING: fetch each retained article's title + body with the shared
+        // article crawler, seeding the sitemap date as a hint, so sitemap items
+        // normalize (the normalizer requires a title).
+        let candidates: Vec<ArticleCrawlCandidate> = ranked
+            .iter()
+            .filter(|entry| match (entry.change_signal(), since) {
+                (Some(signal), Some(watermark)) => signal > watermark,
+                _ => true,
+            })
+            .take(self.config.max_articles)
+            .map(|entry| {
+                ArticleCrawlCandidate::new(entry.loc.clone())
+                    .with_hints(None, entry.published_at().filter(is_plausible_article_datetime))
+            })
+            .collect();
+        let use_browser = self.config.browser.is_some()
+            && source.browser_required;
+        let report = self
+            .article_crawler
+            .crawl_recipe_links(&candidates, use_browser)
+            .await
+            .map_err(|error| CrawlError::SitemapArticleCrawl(error.to_string()))?;
+        let fetched_article_count = report.items.len();
+        let article_failure_count = report.failures.len();
+
+        let fetched_at = chrono::Utc::now();
+        Ok(CrawlBatch {
+            fetched_at,
+            detected_source_kind: SourceKind::Sitemap,
+            metadata: json!({
+                "sitemap_url": final_url,
+                "entries_total": acceptance.total,
+                "entries_dated": acceptance.dated,
+                "entries_editorial": acceptance.editorial,
+                "entries_dated_editorial": acceptance.dated_editorial,
+                "child_sitemaps_fetched": child_sitemaps_fetched,
+                "discovered_urls": discovered_url_count,
+                "articles_fetched": fetched_article_count,
+                "articles_failed": article_failure_count,
+                "incremental_since": since,
+                "sitemap_watermark": new_watermark,
+            }),
+            items: report.items,
+        })
     }
 }
 
@@ -7115,6 +7357,8 @@ pub enum CrawlError {
     ResponseTooLarge { url: Url, limit: usize },
     #[error("invalid RSS/Atom feed: {0}")]
     InvalidFeed(String),
+    #[error("sitemap article crawl failed: {0}")]
+    SitemapArticleCrawl(String),
     #[error("feed entry has no public article URL")]
     ItemMissingUrl,
     #[error("failed to serialize feed entry: {0}")]

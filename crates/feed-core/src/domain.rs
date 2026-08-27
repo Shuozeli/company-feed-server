@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 pub enum SourceKind {
     Rss,
     Atom,
+    Sitemap,
     Html,
     Browser,
 }
@@ -155,6 +156,7 @@ impl EnumParseError {
 string_enum!(SourceKind, "source kind", {
     SourceKind::Rss => "rss",
     SourceKind::Atom => "atom",
+    SourceKind::Sitemap => "sitemap",
     SourceKind::Html => "html",
     SourceKind::Browser => "browser",
 });
@@ -228,6 +230,7 @@ mod tests {
         let values = [
             (SourceKind::Rss, "rss"),
             (SourceKind::Atom, "atom"),
+            (SourceKind::Sitemap, "sitemap"),
             (SourceKind::Html, "html"),
             (SourceKind::Browser, "browser"),
         ];

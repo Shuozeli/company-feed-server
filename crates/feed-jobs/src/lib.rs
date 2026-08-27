@@ -19,8 +19,8 @@ use feed_crawler::{
     ArticleCrawlCandidate, ArticleFetchFailure, ArticlePageError, BrowserFetchConfig, CrawlError,
     HtmlArticleCrawlReport, HtmlArticleCrawler, HtmlArticleCrawlerConfig, HtmlRecipeCrawlCache,
     HtmlRecipeCrawlReport, HtmlRecipeCrawler, HtmlRecipeCrawlerConfig, RecipeCrawlError,
-    RssAtomCrawler, RssAtomCrawlerConfig, distinct_sanitized_content_count,
-    repeated_sanitized_content_urls,
+    RssAtomCrawler, RssAtomCrawlerConfig, SitemapCrawler, SitemapCrawlerConfig,
+    distinct_sanitized_content_count, repeated_sanitized_content_urls,
 };
 use feed_db::{
     ActiveCompanyNewsPublicationClaim, ApprovedFeedItemCompanyClaim, ApprovedSourceCompanyClaim,
@@ -55,6 +55,7 @@ pub fn build_discovery_job_registry(
         max_concurrency: settings.discovery_max_concurrency,
         max_candidates: settings.discovery_max_candidates,
         probe_common_paths: settings.discovery_probe_common_paths,
+        probe_sitemaps: settings.discovery_probe_sitemaps,
         allow_private_networks: settings.discovery_allow_private_networks,
         user_agent: settings.public_fetch_user_agent.clone(),
     })?;
@@ -90,6 +91,7 @@ pub fn build_validation_job_registry(
     settings: &AppSettings,
 ) -> Result<JobHandlerRegistry, JobBootstrapError> {
     let crawler = build_crawler(settings)?;
+    let sitemap_crawler = build_sitemap_crawler(settings)?;
     let policy = CandidateValidationPolicy {
         auto_activate: settings.validation_auto_activate,
         public_export_allowed: settings.validation_public_export,
@@ -99,7 +101,10 @@ pub fn build_validation_job_registry(
     };
     Ok(
         JobHandlerRegistry::new().register(Arc::new(CandidateValidationJobHandler::new(
-            database, crawler, policy,
+            database,
+            crawler,
+            sitemap_crawler,
+            policy,
         )))?,
     )
 }
@@ -109,11 +114,13 @@ pub fn build_crawl_export_job_registry(
     settings: &AppSettings,
 ) -> Result<JobHandlerRegistry, JobBootstrapError> {
     let crawler = build_crawler(settings)?;
+    let sitemap_crawler = build_sitemap_crawler(settings)?;
     let recipe_crawler = build_recipe_crawler(settings)?;
     Ok(JobHandlerRegistry::new()
         .register(Arc::new(CrawlJobHandler::new(
             database.clone(),
             crawler,
+            sitemap_crawler,
             recipe_crawler,
         )))?
         .register(Arc::new(ExportJobHandler::new(database)))?)
@@ -214,6 +221,23 @@ fn build_crawler(settings: &AppSettings) -> Result<RssAtomCrawler, CrawlError> {
         max_items: settings.crawler_max_items,
         allow_private_networks: settings.news_extraction_allow_private_networks,
         user_agent: settings.public_fetch_user_agent.clone(),
+    })
+}
+
+fn build_sitemap_crawler(settings: &AppSettings) -> Result<SitemapCrawler, CrawlError> {
+    SitemapCrawler::new(SitemapCrawlerConfig {
+        request_timeout: settings.crawler_request_timeout,
+        // Sitemaps (esp. indices) can be larger than a feed body.
+        max_response_bytes: settings.crawler_max_response_bytes.max(16 * 1024 * 1024),
+        // Rank a wide pool of recent URLs, but only fetch a bounded number of
+        // article pages per crawl (like the HTML recipe path).
+        max_items: settings.crawler_max_items,
+        max_articles: settings.crawler_max_items.clamp(1, 40),
+        max_child_sitemaps: 4,
+        allow_private_networks: settings.news_extraction_allow_private_networks,
+        user_agent: settings.public_fetch_user_agent.clone(),
+        browser: residential_browser_config(),
+        ..SitemapCrawlerConfig::default()
     })
 }
 
@@ -1072,6 +1096,7 @@ pub struct CandidateValidationPolicy {
 pub struct CandidateValidationJobHandler {
     database: Database,
     crawler: RssAtomCrawler,
+    sitemap_crawler: SitemapCrawler,
     policy: CandidateValidationPolicy,
 }
 
@@ -1079,12 +1104,162 @@ impl CandidateValidationJobHandler {
     pub fn new(
         database: Database,
         crawler: RssAtomCrawler,
+        sitemap_crawler: SitemapCrawler,
         policy: CandidateValidationPolicy,
     ) -> Self {
         Self {
             database,
             crawler,
+            sitemap_crawler,
             policy,
+        }
+    }
+
+    /// Validate a discovered sitemap candidate: crawl it with the sitemap
+    /// crawler and accept it only when it yields enough dated editorial
+    /// articles. Bypasses the RSS/Atom editorial policy engine.
+    async fn validate_sitemap_candidate(
+        &self,
+        candidate: &SourceCandidate,
+        company: &Company,
+        run_id: uuid::Uuid,
+    ) -> Result<(), JobHandlerError> {
+        const MIN_SITEMAP_ITEMS: usize = 3;
+        let source = validation_source(candidate);
+        match self.sitemap_crawler.crawl(&source, None).await {
+            Ok(batch) => {
+                let item_count = i32::try_from(batch.items.len())
+                    .map_err(|_| JobHandlerError::permanent("sitemap item count exceeds i32"))?;
+                let dated_items = batch
+                    .items
+                    .iter()
+                    .filter(|item| item.published_at.is_some())
+                    .count();
+                let latest_item_at = batch.items.iter().filter_map(|item| item.published_at).max();
+                let final_url = batch
+                    .metadata
+                    .get("sitemap_url")
+                    .and_then(Value::as_str)
+                    .and_then(|value| Url::parse(value).ok())
+                    .or_else(|| Some(candidate.candidate_url.clone()));
+                let accepted =
+                    batch.items.len() >= MIN_SITEMAP_ITEMS && dated_items >= MIN_SITEMAP_ITEMS;
+                let status = if accepted {
+                    CandidateValidationStatus::Valid
+                } else {
+                    CandidateValidationStatus::Invalid
+                };
+                let policy_reasons = if accepted {
+                    Vec::new()
+                } else {
+                    vec!["sitemap_yielded_insufficient_dated_editorial_items".to_owned()]
+                };
+                self.database
+                    .complete_candidate_validation_run(
+                        run_id,
+                        &CandidateValidationCompletion {
+                            status,
+                            detected_kind: Some(SourceKind::Sitemap),
+                            final_url,
+                            http_status: Some(200),
+                            item_count,
+                            titled_item_count: 0,
+                            latest_item_at,
+                            policy_reasons,
+                            error: None,
+                            metadata: json!({
+                                "sitemap": batch.metadata,
+                                "dated_items": dated_items,
+                            }),
+                        },
+                    )
+                    .await
+                    .map_err(|error| JobHandlerError::retryable(error.to_string()))?;
+
+                if accepted && self.policy.auto_activate {
+                    let source_id =
+                        default_source_id(&company.company_key, SourceKind::Sitemap, candidate.id);
+                    let activated = self
+                        .database
+                        .accept_source_candidate_with_decision(
+                            candidate.id,
+                            &source_id,
+                            self.policy.freshness_slo_seconds,
+                            self.policy.public_export_allowed,
+                            CandidateDecisionMode::Automatic,
+                            "feed-validation-worker",
+                            "news-scoped sitemap yields dated editorial articles",
+                            json!({ "validation_run_id": run_id, "dated_items": dated_items }),
+                        )
+                        .await
+                        .map_err(|error| JobHandlerError::retryable(error.to_string()))?;
+                    let mut crawl_job = JobSpec::new(
+                        JobType::CrawlSource,
+                        format!("source:{}", activated.id),
+                        Utc::now(),
+                    );
+                    crawl_job.company_id = Some(activated.company_id);
+                    crawl_job.source_id = Some(activated.id);
+                    crawl_job.priority = i16::MAX / 2;
+                    crawl_job.payload = json!({ "source_id": activated.id });
+                    self.database
+                        .enqueue_job(&crawl_job)
+                        .await
+                        .map_err(|error| JobHandlerError::retryable(error.to_string()))?;
+                } else if !accepted {
+                    self.database
+                        .reject_source_candidate_with_decision(
+                            candidate.id,
+                            CandidateDecisionMode::Automatic,
+                            "feed-validation-worker",
+                            "sitemap did not yield enough dated editorial articles",
+                            json!({
+                                "validation_run_id": run_id,
+                                "dated_items": dated_items,
+                                "item_count": item_count,
+                            }),
+                        )
+                        .await
+                        .map_err(|error| JobHandlerError::retryable(error.to_string()))?;
+                } else {
+                    self.database
+                        .keep_source_candidate_for_review(
+                            candidate.id,
+                            CandidateDecisionMode::Automatic,
+                            "feed-validation-worker",
+                            "automatic activation is disabled",
+                            json!({ "validation_run_id": run_id }),
+                        )
+                        .await
+                        .map_err(|error| JobHandlerError::retryable(error.to_string()))?;
+                }
+                Ok(())
+            }
+            Err(error) => {
+                // Transient fetch/parse failure: record and leave the candidate
+                // New so a later validation attempt can retry.
+                self.database
+                    .complete_candidate_validation_run(
+                        run_id,
+                        &CandidateValidationCompletion {
+                            status: CandidateValidationStatus::Failed,
+                            detected_kind: Some(SourceKind::Sitemap),
+                            final_url: Some(candidate.candidate_url.clone()),
+                            http_status: None,
+                            item_count: 0,
+                            titled_item_count: 0,
+                            latest_item_at: None,
+                            policy_reasons: Vec::new(),
+                            error: Some(error.to_string()),
+                            metadata: json!({}),
+                        },
+                    )
+                    .await
+                    .map_err(|error| JobHandlerError::retryable(error.to_string()))?;
+                Err(JobHandlerError::retryable(format!(
+                    "sitemap validation crawl failed: {error}"
+                )))
+            }
         }
     }
 }
@@ -1126,6 +1301,15 @@ impl JobHandler for CandidateValidationJobHandler {
             .begin_candidate_validation_run(candidate.id, job.id)
             .await
             .map_err(|error| JobHandlerError::retryable(error.to_string()))?;
+
+        // Sitemap candidates are validated by the dedicated sitemap crawler +
+        // news-acceptance gate, not the RSS/Atom editorial policy engine.
+        if candidate.candidate_kind == SourceKind::Sitemap {
+            return self
+                .validate_sitemap_candidate(&candidate, &company, run_id)
+                .await;
+        }
+
         let source = validation_source(&candidate);
 
         match self.crawler.crawl(&source).await {
@@ -2338,7 +2522,9 @@ fn default_source_id(company_key: &str, kind: SourceKind, candidate_id: uuid::Uu
 
 fn validation_error_is_retryable(error: &CrawlError) -> bool {
     match error {
-        CrawlError::Client(_) | CrawlError::Request { .. } => true,
+        CrawlError::Client(_)
+        | CrawlError::Request { .. }
+        | CrawlError::SitemapArticleCrawl(_) => true,
         CrawlError::DnsResolution { .. }
         | CrawlError::DnsResolutionEmpty { .. }
         | CrawlError::RemoteAddressUnavailable { .. } => true,
@@ -2374,6 +2560,7 @@ fn validation_error_http(error: &CrawlError) -> (Option<i32>, Option<Url>) {
         | CrawlError::Client(_)
         | CrawlError::UnsupportedSourceKind(_)
         | CrawlError::InvalidFeed(_)
+        | CrawlError::SitemapArticleCrawl(_)
         | CrawlError::ItemMissingUrl
         | CrawlError::Serialize(_) => (None, None),
     }
@@ -6539,6 +6726,7 @@ fn company_news_content_metrics<'a>(
 pub struct CrawlJobHandler {
     database: Database,
     crawler: RssAtomCrawler,
+    sitemap_crawler: SitemapCrawler,
     recipe_crawler: HtmlRecipeCrawler,
 }
 
@@ -6546,11 +6734,13 @@ impl CrawlJobHandler {
     pub fn new(
         database: Database,
         crawler: RssAtomCrawler,
+        sitemap_crawler: SitemapCrawler,
         recipe_crawler: HtmlRecipeCrawler,
     ) -> Self {
         Self {
             database,
             crawler,
+            sitemap_crawler,
             recipe_crawler,
         }
     }
@@ -6760,10 +6950,26 @@ impl JobHandler for CrawlJobHandler {
                 .await;
         }
 
-        match self.crawler.crawl(&source).await {
+        let crawl_result = match source.kind {
+            SourceKind::Sitemap => {
+                let since = self
+                    .database
+                    .get_source_sitemap_watermark(source.id)
+                    .await
+                    .map_err(|error| JobHandlerError::retryable(error.to_string()))?;
+                self.sitemap_crawler.crawl(&source, since).await
+            }
+            _ => self.crawler.crawl(&source).await,
+        };
+        match crawl_result {
             Ok(mut batch) => {
                 let title_diversity = feed_title_diversity(&batch.items);
-                let title_quality_error = if !batch.items.is_empty()
+                // Sitemap items carry only URLs + dates at crawl time; their
+                // titles/bodies are filled in by the downstream content stage,
+                // so the title-diversity gate does not apply to them.
+                let title_quality_error = if source.kind == SourceKind::Sitemap {
+                    None
+                } else if !batch.items.is_empty()
                     && title_diversity.usable_titled_item_count == 0
                 {
                     Some(
@@ -7736,6 +7942,7 @@ fn classify_crawl_error(error: CrawlError) -> JobHandlerError {
         | CrawlError::HttpStatus { .. }
         | CrawlError::ResponseTooLarge { .. }
         | CrawlError::InvalidFeed(_)
+        | CrawlError::SitemapArticleCrawl(_)
         | CrawlError::ItemMissingUrl
         | CrawlError::Serialize(_)
         | CrawlError::DnsResolution { .. }

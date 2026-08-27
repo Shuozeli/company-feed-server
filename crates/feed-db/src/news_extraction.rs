@@ -269,7 +269,7 @@ impl Database {
                 WHERE
                     company_id = $1
                     AND status = 'approved'
-                    AND kind IN ('rss', 'atom')
+                    AND kind IN ('rss', 'atom', 'sitemap')
             )
             "#,
         )
@@ -291,7 +291,7 @@ impl Database {
                 WHERE
                     source.company_id = $1
                     AND source.status = 'approved'
-                    AND source.kind IN ('rss', 'atom')
+                    AND source.kind IN ('rss', 'atom', 'sitemap')
                     AND state.last_success_at IS NOT NULL
                     AND state.consecutive_failures = 0
                     AND state.consecutive_zero_runs < 3

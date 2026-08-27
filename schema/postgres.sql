@@ -104,7 +104,7 @@ ALTER TABLE "public"."candidate_validation_runs" ADD CONSTRAINT "candidate_valid
 
 ALTER TABLE "public"."candidate_validation_runs" ADD CONSTRAINT "candidate_validation_runs_item_count_nonnegative" CHECK((item_count >= 0));
 
-ALTER TABLE "public"."candidate_validation_runs" ADD CONSTRAINT "candidate_validation_runs_kind_valid" CHECK(((detected_kind IS NULL) OR (detected_kind = ANY (ARRAY['rss'::text, 'atom'::text]))));
+ALTER TABLE "public"."candidate_validation_runs" ADD CONSTRAINT "candidate_validation_runs_kind_valid" CHECK(((detected_kind IS NULL) OR (detected_kind = ANY (ARRAY['rss'::text, 'atom'::text, 'sitemap'::text]))));
 
 ALTER TABLE "public"."candidate_validation_runs" ADD CONSTRAINT "candidate_validation_runs_policy_reasons_array" CHECK((jsonb_typeof(policy_reasons) = 'array'::text));
 
@@ -718,7 +718,7 @@ ALTER TABLE "public"."feed_items" ADD CONSTRAINT "feed_items_content_hash_not_bl
 
 ALTER TABLE "public"."feed_items" ADD CONSTRAINT "feed_items_external_id_not_blank" CHECK((btrim(external_id) <> ''::text));
 
-ALTER TABLE "public"."feed_items" ADD CONSTRAINT "feed_items_source_kind_valid" CHECK((source_kind = ANY (ARRAY['rss'::text, 'atom'::text, 'html'::text, 'browser'::text])));
+ALTER TABLE "public"."feed_items" ADD CONSTRAINT "feed_items_source_kind_valid" CHECK((source_kind = ANY (ARRAY['rss'::text, 'atom'::text, 'sitemap'::text, 'html'::text, 'browser'::text])));
 
 ALTER TABLE "public"."feed_items" ADD CONSTRAINT "feed_items_title_not_blank" CHECK((btrim(title) <> ''::text));
 
@@ -1006,7 +1006,7 @@ ALTER TABLE "public"."source_candidates" ADD CONSTRAINT "source_candidates_accep
 
 ALTER TABLE "public"."source_candidates" ADD CONSTRAINT "source_candidates_confidence_range" CHECK(((confidence >= (0.0)::double precision) AND (confidence <= (1.0)::double precision)));
 
-ALTER TABLE "public"."source_candidates" ADD CONSTRAINT "source_candidates_kind_valid" CHECK((candidate_kind = ANY (ARRAY['rss'::text, 'atom'::text, 'html'::text, 'browser'::text])));
+ALTER TABLE "public"."source_candidates" ADD CONSTRAINT "source_candidates_kind_valid" CHECK((candidate_kind = ANY (ARRAY['rss'::text, 'atom'::text, 'sitemap'::text, 'html'::text, 'browser'::text])));
 
 ALTER TABLE "public"."source_candidates" ADD CONSTRAINT "source_candidates_status_valid" CHECK((status = ANY (ARRAY['new'::text, 'accepted'::text, 'rejected'::text])));
 
@@ -1093,7 +1093,7 @@ ALTER TABLE "public"."sources" ADD CONSTRAINT "sources_discovery_confidence_rang
 
 ALTER TABLE "public"."sources" ADD CONSTRAINT "sources_freshness_slo_positive" CHECK((freshness_slo_seconds > 0));
 
-ALTER TABLE "public"."sources" ADD CONSTRAINT "sources_kind_valid" CHECK((kind = ANY (ARRAY['rss'::text, 'atom'::text, 'html'::text, 'browser'::text])));
+ALTER TABLE "public"."sources" ADD CONSTRAINT "sources_kind_valid" CHECK((kind = ANY (ARRAY['rss'::text, 'atom'::text, 'sitemap'::text, 'html'::text, 'browser'::text])));
 
 ALTER TABLE "public"."sources" ADD CONSTRAINT "sources_source_id_not_blank" CHECK((btrim(source_id) <> ''::text));
 

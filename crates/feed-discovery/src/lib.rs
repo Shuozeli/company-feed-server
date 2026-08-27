@@ -6,6 +6,7 @@ use std::{
 
 use feed_core::{
     Company, DEFAULT_PUBLIC_FETCH_USER_AGENT, DiscoveredSource, SourceKind, is_sitemap_url,
+    news_score,
 };
 use feed_rs::model::FeedType;
 use futures_util::{StreamExt, stream};
@@ -39,6 +40,20 @@ const COMMON_FEED_PATHS: &[&str] = &[
     "/press-releases/feed/",
 ];
 
+const COMMON_SITEMAP_PATHS: &[&str] = &[
+    "/sitemap.xml",
+    "/sitemap_index.xml",
+    "/news-sitemap.xml",
+    "/news/sitemap.xml",
+    "/newsroom/sitemap.xml",
+    "/press/sitemap.xml",
+    "/blog/sitemap.xml",
+];
+
+/// Max sitemap candidates emitted per company, and max origins probed.
+const MAX_SITEMAP_CANDIDATES: usize = 3;
+const MAX_SITEMAP_ORIGINS: usize = 3;
+
 const SOURCE_LINK_TEXT_PHRASES: &[&str] = &[
     "newsroom",
     "press release",
@@ -70,6 +85,10 @@ pub struct DiscoveryConfig {
     pub max_concurrency: usize,
     pub max_candidates: usize,
     pub probe_common_paths: bool,
+    /// Probe robots.txt + common sitemap paths and emit news-scoped sitemap
+    /// candidates (the sitemap discovery tier). Off by default; enabled for the
+    /// dark-launch cohort first.
+    pub probe_sitemaps: bool,
     pub allow_private_networks: bool,
     pub user_agent: String,
 }
@@ -82,6 +101,7 @@ impl Default for DiscoveryConfig {
             max_concurrency: 8,
             max_candidates: 200,
             probe_common_paths: true,
+            probe_sitemaps: false,
             allow_private_networks: false,
             user_agent: DEFAULT_PUBLIC_FETCH_USER_AGENT.to_owned(),
         }
@@ -175,6 +195,11 @@ impl DiscoveryClient {
                     });
                 }
             }
+        }
+
+        if self.config.probe_sitemaps {
+            self.augment_with_sitemaps(company, seeds, &mut accumulator, &mut attempts)
+                .await;
         }
 
         attempts.sort_by(|left, right| left.url.as_str().cmp(right.url.as_str()));
@@ -289,6 +314,123 @@ impl DiscoveryClient {
         }
         unreachable!("redirect loop returns on success or the sixth redirect")
     }
+
+    /// Probe robots.txt + common sitemap paths and emit news-scoped
+    /// `SourceKind::Sitemap` candidates. Cheap: it only confirms the target looks
+    /// like a sitemap; full parse + news-acceptance is the validator's job.
+    async fn augment_with_sitemaps(
+        &self,
+        company: &Company,
+        seeds: &[DiscoverySeed],
+        accumulator: &mut CandidateAccumulator,
+        attempts: &mut Vec<DiscoveryAttempt>,
+    ) {
+        let mut origins: Vec<Url> = Vec::new();
+        let mut seen_origins = std::collections::HashSet::new();
+        for (_, url) in company.discovery_entry_points() {
+            if let Some(origin) = origin_url(url)
+                && seen_origins.insert(origin.as_str().to_owned())
+            {
+                origins.push(origin);
+            }
+        }
+        for seed in seeds {
+            if let Some(origin) = origin_url(&seed.url)
+                && seen_origins.insert(origin.as_str().to_owned())
+            {
+                origins.push(origin);
+            }
+        }
+        origins.truncate(MAX_SITEMAP_ORIGINS);
+
+        let mut sitemap_urls: Vec<Url> = Vec::new();
+        let mut seen_sitemaps = std::collections::HashSet::new();
+        for origin in &origins {
+            if let Ok(robots) = origin.join("/robots.txt")
+                && let Ok(fetched) = self.fetch(&robots).await
+            {
+                for directive in parse_robots_sitemaps(&fetched.body) {
+                    if seen_sitemaps.insert(directive.as_str().to_owned()) {
+                        sitemap_urls.push(directive);
+                    }
+                }
+            }
+            for path in COMMON_SITEMAP_PATHS {
+                if let Ok(url) = origin.join(path)
+                    && seen_sitemaps.insert(url.as_str().to_owned())
+                {
+                    sitemap_urls.push(url);
+                }
+            }
+        }
+
+        // News-scoped sitemaps first, then verify + emit up to the cap.
+        sitemap_urls.sort_by_key(|url| -news_score(url));
+        let mut emitted = 0_usize;
+        for url in sitemap_urls {
+            if emitted >= MAX_SITEMAP_CANDIDATES {
+                break;
+            }
+            let Ok(fetched) = self.fetch(&url).await else {
+                continue;
+            };
+            let outcome = if body_looks_like_sitemap(&fetched.body, fetched.content_type.as_deref())
+            {
+                let score = news_score(&fetched.final_url);
+                let confidence = if score > 0 { 0.85 } else { 0.70 };
+                accumulator.insert(
+                    fetched.final_url.clone(),
+                    SourceKind::Sitemap,
+                    confidence,
+                    json!({
+                        "method": "sitemap_probe",
+                        "found_on": url.as_str(),
+                        "http_status": fetched.status.as_u16(),
+                        "news_score": score,
+                    }),
+                );
+                emitted += 1;
+                "sitemap_candidate"
+            } else {
+                "not_a_sitemap"
+            };
+            attempts.push(DiscoveryAttempt {
+                url,
+                method: "sitemap_probe".to_owned(),
+                required: false,
+                status: Some(fetched.status.as_u16()),
+                content_type: fetched.content_type,
+                final_url: Some(fetched.final_url),
+                outcome: outcome.to_owned(),
+                error: None,
+            });
+        }
+    }
+}
+
+/// Extract `Sitemap:` directive URLs from a robots.txt body.
+fn parse_robots_sitemaps(body: &[u8]) -> Vec<Url> {
+    let text = String::from_utf8_lossy(body);
+    text.lines()
+        .filter_map(|line| {
+            let line = line.trim();
+            let rest = line.strip_prefix("Sitemap:").or_else(|| {
+                line.get(..8)
+                    .filter(|prefix| prefix.eq_ignore_ascii_case("sitemap:"))
+                    .map(|_| &line[8..])
+            })?;
+            Url::parse(rest.trim()).ok()
+        })
+        .collect()
+}
+
+/// Cheap sniff: does this body look like a sitemap XML document?
+fn body_looks_like_sitemap(body: &[u8], content_type: Option<&str>) -> bool {
+    let head_len = body.len().min(2048);
+    let head = String::from_utf8_lossy(&body[..head_len]).to_ascii_lowercase();
+    head.contains("<urlset") || head.contains("<sitemapindex")
+        || (content_type.is_some_and(|value| value.to_ascii_lowercase().contains("xml"))
+            && head.contains("<loc"))
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -794,7 +936,9 @@ impl CandidateAccumulator {
 
     fn insert(&mut self, mut url: Url, kind: SourceKind, confidence: f64, observation: Value) {
         url.set_fragment(None);
-        if ignored_source_candidate(&url) {
+        // A sitemap URL is intentionally the target for a Sitemap-kind candidate;
+        // only the non-sitemap kinds are filtered against sitemap inventories.
+        if kind != SourceKind::Sitemap && ignored_source_candidate(&url) {
             return;
         }
         let key = (kind.as_str().to_owned(), canonical_source_key(&url, kind));
@@ -1061,6 +1205,27 @@ mod tests {
     use super::*;
 
     #[test]
+    fn parses_robots_sitemap_directives() {
+        let robots = b"User-agent: *\nDisallow: /tmp\nSitemap: https://www.apple.com/newsroom/sitemap.xml\nsitemap: https://www.apple.com/shop/sitemap.xml\n";
+        let found = parse_robots_sitemaps(robots);
+        assert_eq!(found.len(), 2);
+        assert!(found.iter().any(|url| url.path().contains("newsroom")));
+    }
+
+    #[test]
+    fn sniffs_sitemap_bodies() {
+        assert!(body_looks_like_sitemap(
+            b"<?xml version=\"1.0\"?><urlset><url><loc>https://x/a</loc></url></urlset>",
+            Some("application/xml"),
+        ));
+        assert!(body_looks_like_sitemap(
+            b"<sitemapindex><sitemap><loc>https://x/s.xml</loc></sitemap></sitemapindex>",
+            None,
+        ));
+        assert!(!body_looks_like_sitemap(b"<html><body>not a sitemap</body></html>", Some("text/html")));
+    }
+
+    #[test]
     fn discovery_uses_the_shared_identifiable_user_agent_by_default() {
         assert_eq!(
             DiscoveryConfig::default().user_agent,
@@ -1289,6 +1454,7 @@ mod tests {
             max_concurrency: 4,
             max_candidates: 20,
             probe_common_paths: true,
+            probe_sitemaps: false,
             allow_private_networks: true,
             user_agent: "discovery-test".to_owned(),
         })
@@ -1368,6 +1534,7 @@ mod tests {
             max_concurrency: 4,
             max_candidates: 20,
             probe_common_paths: true,
+            probe_sitemaps: false,
             allow_private_networks: true,
             user_agent: "discovery-test".to_owned(),
         })
@@ -1421,6 +1588,7 @@ mod tests {
             max_concurrency: 2,
             max_candidates: 20,
             probe_common_paths: false,
+            probe_sitemaps: false,
             allow_private_networks: true,
             user_agent: "discovery-test".to_owned(),
         })

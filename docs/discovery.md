@@ -1,3 +1,5 @@
+<!-- agent-updated: 2026-08-24T00:00:00Z -->
+
 # Discovery
 
 Discovery answers: “which public company web properties and feeds might be
@@ -73,6 +75,19 @@ healthy. A successfully parsed RSS or Atom probe is sufficient to keep the
 discovery report and candidate even when every configured entry-page fetch
 fails. The failed entry attempts remain recorded as evidence; discovery fails
 only when neither an entry point nor a valid feed probe succeeds.
+
+## Sitemap Probe (optional)
+
+Gated by `DISCOVERY_PROBE_SITEMAPS` (default off). After the RSS/Atom pass,
+discovery fetches each origin's `robots.txt`, reads its `Sitemap:` directives,
+and probes common sitemap paths (`/sitemap.xml`, `/news-sitemap.xml`,
+`/newsroom/sitemap.xml`, ...). Targets that look like sitemap XML are emitted as
+`SourceKind::Sitemap` candidates - news-scoped ones (news/press/blog tokens) at
+confidence 0.85, generic ones at 0.70, i.e. below RSS/Atom (0.96-0.99) and above
+HTML (0.65-0.75). Discovery only proposes; the validation worker fetches, parses,
+and accepts a sitemap candidate only when it yields enough dated editorial
+articles. This is the middle tier of RSS/Atom -> sitemap -> HTML. See
+`docs/design/2026-08-24-sitemap-discovery-tier.md`.
 
 ## Optional Web Adapter
 

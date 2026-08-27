@@ -21,7 +21,7 @@ use feed_core::{
 };
 use feed_crawler::{
     HtmlArticleCrawler, HtmlArticleCrawlerConfig, HtmlRecipeCrawler, HtmlRecipeCrawlerConfig,
-    RssAtomCrawler, RssAtomCrawlerConfig,
+    RssAtomCrawler, RssAtomCrawlerConfig, SitemapCrawler, SitemapCrawlerConfig,
 };
 use feed_db::Database;
 use feed_discovery::{DiscoveryClient, DiscoveryConfig};
@@ -184,6 +184,11 @@ async fn public_feed_becomes_api_item_and_git_archive() {
             ..RssAtomCrawlerConfig::default()
         })
         .expect("validation crawler"),
+        SitemapCrawler::new(SitemapCrawlerConfig {
+            allow_private_networks: true,
+            ..SitemapCrawlerConfig::default()
+        })
+        .expect("validation sitemap crawler"),
         CandidateValidationPolicy {
             auto_activate: true,
             public_export_allowed: true,
@@ -244,6 +249,11 @@ async fn public_feed_becomes_api_item_and_git_archive() {
             ..RssAtomCrawlerConfig::default()
         })
         .expect("crawler"),
+        SitemapCrawler::new(SitemapCrawlerConfig {
+            allow_private_networks: true,
+            ..SitemapCrawlerConfig::default()
+        })
+        .expect("sitemap crawler"),
         HtmlRecipeCrawler::new(HtmlRecipeCrawlerConfig {
             allow_private_networks: true,
             ..HtmlRecipeCrawlerConfig::default()
@@ -1119,6 +1129,12 @@ async fn manual_news_import_fetches_and_persists_cited_public_articles() {
             ..RssAtomCrawlerConfig::default()
         })
         .expect("feed crawler"),
+        SitemapCrawler::new(SitemapCrawlerConfig {
+            request_timeout: Duration::from_secs(5),
+            allow_private_networks: true,
+            ..SitemapCrawlerConfig::default()
+        })
+        .expect("sitemap crawler"),
         HtmlRecipeCrawler::new(HtmlRecipeCrawlerConfig {
             request_timeout: Duration::from_secs(5),
             max_articles: 10,
