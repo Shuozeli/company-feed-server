@@ -756,6 +756,11 @@ CREATE INDEX feed_items_public_url_identity_idx ON public.feed_items USING btree
 
 CREATE INDEX feed_items_source_fetched_idx ON public.feed_items USING btree (source_id, fetched_at DESC);
 
+-- Backs the FK feed_items.raw_crawl_item_id -> raw_crawl_items (ON DELETE SET NULL);
+-- without it, deleting a raw_crawl_item seq-scans feed_items per row, making the
+-- retention delete catastrophically slow.
+CREATE INDEX feed_items_raw_crawl_item_id_idx ON public.feed_items USING btree (raw_crawl_item_id);
+
 CREATE UNIQUE INDEX feed_items_source_public_url_identity_unique_idx ON public.feed_items USING btree (source_id, public_url_identity_key(url)) WHERE (NOT is_private);
 
 ALTER TABLE "public"."exported_items" ADD CONSTRAINT "exported_items_feed_item_id_fkey" FOREIGN KEY (feed_item_id) REFERENCES feed_items(id) ON DELETE CASCADE NOT VALID;
@@ -952,6 +957,18 @@ CREATE TABLE "public"."raw_crawl_items" (
 	"updated_at" timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL
 );
 
+-- raw_crawl_items is a very hot table: the payload-offloader constantly UPDATEs it
+-- (blanking payload once uploaded to MinIO), generating dead tuples. Make autovacuum
+-- far more aggressive than the 20% default so the table does not bloat between runs
+-- (see docs/postmortem/2026-09-15-raw-crawl-items-bloat.md; retention is handled by
+-- the nightly raw_crawl_items retention job/timer, not by this).
+ALTER TABLE "public"."raw_crawl_items" SET (
+  autovacuum_vacuum_scale_factor = 0.02,
+  autovacuum_vacuum_threshold = 50000,
+  autovacuum_vacuum_cost_delay = 2,
+  autovacuum_vacuum_cost_limit = 2000
+);
+
 ALTER TABLE "public"."raw_crawl_items" ADD CONSTRAINT "raw_crawl_items_attempts_nonnegative" CHECK((normalization_attempt_count >= 0));
 
 ALTER TABLE "public"."raw_crawl_items" ADD CONSTRAINT "raw_crawl_items_key_not_blank" CHECK((btrim(source_item_key) <> ''::text));
@@ -981,6 +998,10 @@ CREATE INDEX raw_crawl_items_processing_idx ON public.raw_crawl_items USING btre
 CREATE INDEX raw_crawl_items_source_idx ON public.raw_crawl_items USING btree (source_id, fetched_at DESC);
 
 CREATE INDEX raw_crawl_items_unmigrated_idx ON public.raw_crawl_items USING btree (id) WHERE (payload_s3_key IS NULL);
+
+-- Supports the nightly retention delete (offloaded rows by age); partial so it only
+-- indexes the offloaded rows the retention job scans. See scripts/retention-raw-crawl-items.sh.
+CREATE INDEX raw_crawl_items_offloaded_created_idx ON public.raw_crawl_items USING btree (created_at) WHERE (payload_s3_key IS NOT NULL);
 
 ALTER TABLE "public"."feed_items" ADD CONSTRAINT "feed_items_raw_crawl_item_id_fkey" FOREIGN KEY (raw_crawl_item_id) REFERENCES raw_crawl_items(id) ON DELETE SET NULL NOT VALID;
 

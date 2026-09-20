@@ -1,0 +1,15 @@
+[Unit]
+Description=company-feed raw_crawl_items nightly retention (delete >30d offloaded, unreferenced rows)
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+# repo path on the dev host; adjust if the checkout moves
+WorkingDirectory=/home/cyuan/projects/company-feed-server
+ExecStart=/home/cyuan/projects/company-feed-server/scripts/retention-raw-crawl-items.sh
+# retention window + batch size (script defaults; override here if needed)
+Environment=RETENTION_DAYS=30
+Environment=BATCH=100000
+StandardOutput=append:/var/log/raw-crawl-retention.log
+StandardError=append:/var/log/raw-crawl-retention.log
